@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::utils::distance_functions;
+pub mod distance_functions;
 
 pub fn kmer_similarity(
     base_seq: &[char],

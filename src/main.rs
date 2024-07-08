@@ -32,10 +32,7 @@ struct Args {
     #[arg(long)]
     strobe_window_length: Option<usize>,
 }
-
-#[allow(unused_imports)]
-use similarity_methods::utils::sequence;
-use similarity_methods::utils::methods;
+use similarity_methods;
 
 /* Using serde to parse CSV data. */
 #[derive(Debug, Deserialize)]
@@ -67,7 +64,7 @@ fn run(args: Args) -> Result<()> {
         let base_seq: Vec<char> = record.base_sequence.chars().collect();
         let mod_seq: Vec<char> = record.modified_sequence.chars().collect();        
         let estimated_distance: f64 = match args.representation_method.as_str() {
-            "kmer" => methods::kmer_similarity(
+            "kmer" => similarity_methods::kmer_similarity(
                 &base_seq,
                 &mod_seq,
                 &args.distance_function,
@@ -75,7 +72,7 @@ fn run(args: Args) -> Result<()> {
                     .expect("argument 'k' not provided!"),
                 args.step.clone()
             )?,
-            "minimizer" => methods::minimizer_similarity(
+            "minimizer" => similarity_methods::minimizer_similarity(
                 &base_seq,
                 &mod_seq,
                 &args.distance_function,
@@ -85,7 +82,7 @@ fn run(args: Args) -> Result<()> {
                     .expect("argument 'minimizer_window_length' not provided!"),
                 args.step.clone()
             )?,
-            "strobemer" => methods::strobemer_similarity(
+            "strobemer" => similarity_methods::strobemer_similarity(
                 &base_seq,
                 &mod_seq,
                 &args.distance_function,

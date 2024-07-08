@@ -2,7 +2,6 @@
 name = "similarity_methods"
 version = "0.1.0"
 edition = "2021"
-default-run = "generate_comparison_data"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,5 +18,5 @@ tempfile = "3.10.1"
 seahash = "4.1.0"
 
 [lib]
-name = "similarity_methods"  # This name will be used to reference the library
-path = "src/lib.rs"  # Specify the path to your library file
+name = "similarity_methods"
+path = "src/lib.rs"
