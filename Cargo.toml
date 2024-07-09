@@ -20,3 +20,7 @@ seahash = "4.1.0"
 [lib]
 name = "similarity_methods"
 path = "src/lib.rs"
+
+[[bin]]
+name = "strobe_map"
+path = "src/strobe_map.rs"

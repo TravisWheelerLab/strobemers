@@ -251,7 +251,7 @@ fn generate_single_strobemer(
     Ok(Strobemer::new(strobes))
 }
 
-/* This is the final goal of my project! */
+/* This is the final goal of my project!
 pub fn tensor_slide_sketch(base_seq: &[char],
     mod_seq: &[char],
     k: usize,
@@ -259,12 +259,13 @@ pub fn tensor_slide_sketch(base_seq: &[char],
 ) -> Result<f64> {
     unimplemented!();
 }
+*/
 
 #[cfg(test)]
 mod similarity_method_tests {
     use pretty_assertions::assert_eq;
 
-    use crate::utils::methods::strobemer_similarity;
+    use super::strobemer_similarity;
 
     #[test]
     fn strobemer_euclidean_distance_test_1() {

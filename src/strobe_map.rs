@@ -9,27 +9,27 @@ use std::io::{self,Write};
 #[command(about, author, version)]
 /// Similarity Methods
 struct Args {
-    #[arg(short, long)]
-    sequence_db: String,
-    #[arg(short, long, default_value = "tests/outputs/unnamed_data.csv")]
-    outfile: String,
-    #[arg(short, long)]
-    representation_method: String,
-    #[arg(short, long)]
+    #[arg(short, long, help = "Path to a CSV of <string, string, integer>'s")]
+    input: String,
+    #[arg(short, long, help = "Path to an output CSV.", default_value = "tests/outputs/unnamed_data.csv")]
+    output: String,
+    #[arg(short, long, help = "Which string representation method (e.g. k-mers")]
+    method: String,
+    #[arg(short, long, help = "Distance estimation function (e.g. Jaccard similarity)")]
     distance_function: String,
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, help = "Spacing between representation windows", default_value_t = 1)]
     step: usize,
-    #[arg(short, long)]
+    #[arg(short, help = "For  k-mer-based methods")]
     k: Option<usize>,
-    #[arg(short, long)]
+    #[arg(long, help = "For minimizer-based methods")]
     minimizer_window_length: Option<usize>,
-    #[arg(long)]
-    order: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "For strobemer-based methods")]
+    strobemer_order: Option<usize>,
+    #[arg(long, help = "For strobemer-based methods")]
     strobe_length: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "For strobemer-based methods")]
     strobe_window_gap: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "For strobemer-based methods")]
     strobe_window_length: Option<usize>,
 }
 use similarity_methods;
@@ -57,13 +57,13 @@ fn run(args: Args) -> Result<()> {
     let mut edit_distance_sums: HashMap<usize, f64> = HashMap::new();
     let mut edit_distance_squared_sums: HashMap<usize, f64> = HashMap::new();
     let mut edit_distance_counts: HashMap<usize, f64> = HashMap::new();
-    let mut rdr = ReaderBuilder::new().from_path(&args.sequence_db)?;
+    let mut rdr = ReaderBuilder::new().from_path(&args.input)?;
 
     for (i, result) in rdr.deserialize().enumerate() {
         let record: DatabaseRecord = result?;
         let base_seq: Vec<char> = record.base_sequence.chars().collect();
         let mod_seq: Vec<char> = record.modified_sequence.chars().collect();        
-        let estimated_distance: f64 = match args.representation_method.as_str() {
+        let estimated_distance: f64 = match args.method.as_str() {
             "kmer" => similarity_methods::kmer_similarity(
                 &base_seq,
                 &mod_seq,
@@ -86,7 +86,7 @@ fn run(args: Args) -> Result<()> {
                 &base_seq,
                 &mod_seq,
                 &args.distance_function,
-                args.order.clone()
+                args.strobemer_order.clone()
                     .expect("argument 'strobemer_order' not provided!"),
                 args.strobe_length.clone()
                     .expect("argument 'strobe_length' not provided!"),
@@ -97,7 +97,7 @@ fn run(args: Args) -> Result<()> {
                 args.step.clone()
             )?,
             _ => {
-                bail!("Unknown representation method: {}", args.representation_method.as_str());
+                bail!("Unknown representation method: {}", args.method.as_str());
             }
         };
 
@@ -138,7 +138,7 @@ fn run(args: Args) -> Result<()> {
 
     let mut wtr = WriterBuilder::new()
         .delimiter(b',')
-        .from_path(&args.outfile)?;
+        .from_path(&args.output)?;
     wtr.write_record(&header_row)?;
 
     let mut sorted_edit_distances: Vec<&usize> = edit_distance_counts.keys().collect();
@@ -152,6 +152,6 @@ fn run(args: Args) -> Result<()> {
         wtr.write_record(&row)?;
     }
 
-    println!(r#"Done, see output "{}""#, args.outfile);
+    println!(r#"Done, see output "{}""#, args.output);
     Ok(())
 }
