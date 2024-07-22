@@ -23,4 +23,4 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "strobe_map"
-path = "src/strobe_map.rs"
+path = "src/bin/strobe_map.rs"

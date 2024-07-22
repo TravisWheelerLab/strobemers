@@ -1,38 +1,94 @@
-use anyhow::{bail, Result};
-use clap::Parser;
+use anyhow::Result;
+use clap::{builder::PossibleValue, Parser, ValueEnum};
 use csv::{ReaderBuilder, WriterBuilder};
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::io::{self,Write};
+use similarity_methods::{
+    kmer_similarity, minimizer_similarity, strobemer_similarity,
+    DistanceFunction,
+};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+};
 
-#[derive(Debug, Parser)]
-#[command(about, author, version)]
-/// Similarity Methods
+#[derive(Parser, Debug)]
+#[command(author, version, about)]
 struct Args {
-    #[arg(short, long, help = "Path to a CSV of <string, string, integer>'s")]
+    #[arg(long, value_name = "METHOD")]
+    method: SimilarityMethod,
+
+    #[arg(short, long, value_name = "INPUT", help = "Input CSV file")]
     input: String,
-    #[arg(short, long, help = "Path to an output CSV.", default_value = "tests/outputs/unnamed_data.csv")]
+
+    #[arg(
+        short,
+        long,
+        default_value = "out.csv",
+        value_name = "OUTPUT",
+        help = "Output CSV file"
+    )]
     output: String,
-    #[arg(short, long, help = "Which string representation method (e.g. k-mers")]
-    method: String,
-    #[arg(short, long, help = "Distance estimation function (e.g. Jaccard similarity)")]
-    distance_function: String,
-    #[arg(long, help = "Spacing between representation windows", default_value_t = 1)]
+
+    #[arg(short, long, help = "Distance estimation function")]
+    distance_function: DistanceFunction,
+
+    #[arg(
+        short,
+        long,
+        help = "Spacing between representation windows",
+        default_value_t = 1
+    )]
     step: usize,
-    #[arg(short, help = "For  k-mer-based methods")]
-    k: Option<usize>,
-    #[arg(long, help = "For minimizer-based methods")]
-    minimizer_window_length: Option<usize>,
-    #[arg(long, help = "For strobemer-based methods")]
-    strobemer_order: Option<usize>,
-    #[arg(long, help = "For strobemer-based methods")]
-    strobe_length: Option<usize>,
-    #[arg(long, help = "For strobemer-based methods")]
-    strobe_window_gap: Option<usize>,
-    #[arg(long, help = "For strobemer-based methods")]
-    strobe_window_length: Option<usize>,
+
+    /// Size of k
+    #[arg(short)]
+    k: usize,
+
+    /// Minimizer window length
+    #[arg(long)]
+    minimizer_window_length: usize,
+
+    /// Strobemer Order
+    #[arg(long)]
+    strobemer_order: usize,
+
+    /// Strobemer length
+    #[arg(long)]
+    strobemer_length: usize,
+
+    /// Strobemer window gap
+    #[arg(long)]
+    strobemer_window_gap: usize,
+
+    /// Strobemer window length
+    #[arg(long)]
+    strobemer_window_length: usize,
 }
-use similarity_methods;
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+enum SimilarityMethod {
+    Kmer,
+    Minimizer,
+    Strobemer,
+}
+
+impl ValueEnum for SimilarityMethod {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            SimilarityMethod::Kmer,
+            SimilarityMethod::Minimizer,
+            SimilarityMethod::Strobemer,
+        ]
+    }
+
+    fn to_possible_value<'a>(&self) -> Option<PossibleValue> {
+        Some(match self {
+            SimilarityMethod::Kmer => PossibleValue::new("kmer"),
+            SimilarityMethod::Minimizer => PossibleValue::new("minimizer"),
+            SimilarityMethod::Strobemer => PossibleValue::new("strobemer"),
+        })
+    }
+}
 
 /* Using serde to parse CSV data. */
 #[derive(Debug, Deserialize)]
@@ -62,54 +118,50 @@ fn run(args: Args) -> Result<()> {
     for (i, result) in rdr.deserialize().enumerate() {
         let record: DatabaseRecord = result?;
         let base_seq: Vec<char> = record.base_sequence.chars().collect();
-        let mod_seq: Vec<char> = record.modified_sequence.chars().collect();        
-        let estimated_distance: f64 = match args.method.as_str() {
-            "kmer" => similarity_methods::kmer_similarity(
+        let mod_seq: Vec<char> = record.modified_sequence.chars().collect();
+        let estimated_distance: f64 = match args.method {
+            SimilarityMethod::Kmer => kmer_similarity(
                 &base_seq,
                 &mod_seq,
-                &args.distance_function,
-                args.k.clone()
-                    .expect("argument 'k' not provided!"),
-                args.step.clone()
+                args.distance_function.clone(),
+                args.k.clone(),
+                args.step.clone(),
             )?,
-            "minimizer" => similarity_methods::minimizer_similarity(
+            SimilarityMethod::Minimizer => minimizer_similarity(
                 &base_seq,
                 &mod_seq,
-                &args.distance_function,
-                args.k.clone()
-                    .expect("argument 'k' not provided!"),
-                args.minimizer_window_length.clone()
-                    .expect("argument 'minimizer_window_length' not provided!"),
-                args.step.clone()
+                args.distance_function.clone(),
+                args.k.clone(),
+                args.minimizer_window_length.clone(),
+                args.step.clone(),
             )?,
-            "strobemer" => similarity_methods::strobemer_similarity(
+            SimilarityMethod::Strobemer => strobemer_similarity(
                 &base_seq,
                 &mod_seq,
-                &args.distance_function,
-                args.strobemer_order.clone()
-                    .expect("argument 'strobemer_order' not provided!"),
-                args.strobe_length.clone()
-                    .expect("argument 'strobe_length' not provided!"),
-                args.strobe_window_gap.clone()
-                    .expect("argument 'strobe_window_gap' not provided!"),
-                args.strobe_window_length.clone()
-                    .expect("argument 'strobe_window_length' not provided!"),
-                args.step.clone()
+                args.distance_function.clone(),
+                args.strobemer_order.clone(),
+                args.strobemer_length.clone(),
+                args.strobemer_window_gap.clone(),
+                args.strobemer_window_length.clone(),
+                args.step.clone(),
             )?,
-            _ => {
-                bail!("Unknown representation method: {}", args.method.as_str());
-            }
         };
 
-        let sum = edit_distance_sums.entry(record.edit_distance.clone()).or_insert(0.0);
-        let squared_sum = edit_distance_squared_sums.entry(record.edit_distance.clone()).or_insert(0.0);
-        let count = edit_distance_counts.entry(record.edit_distance.clone()).or_insert(0.0);
-        *sum += estimated_distance;
-        *squared_sum += estimated_distance * estimated_distance;
-        *count += 1.0;
+        edit_distance_sums
+            .entry(record.edit_distance.clone())
+            .and_modify(|v| *v += estimated_distance)
+            .or_insert(0.0);
+        edit_distance_squared_sums
+            .entry(record.edit_distance.clone())
+            .and_modify(|v| *v += estimated_distance * estimated_distance)
+            .or_insert(0.0);
+        edit_distance_counts
+            .entry(record.edit_distance.clone())
+            .and_modify(|v| *v += 1.)
+            .or_insert(0.0);
 
         print!("\rString pair #{:?} has been processed!", i);
-        io::stdout().flush().unwrap();
+        io::stdout().flush()?;
     }
 
     // Compute mean and confidence intervals from rolling data.
@@ -118,7 +170,8 @@ fn run(args: Args) -> Result<()> {
     let mut means: HashMap<usize, f64> = HashMap::new();
     for (edit_distance, count) in &edit_distance_counts {
         let sum = edit_distance_sums.get(&edit_distance).unwrap();
-        let squared_sum = edit_distance_squared_sums.get(&edit_distance).unwrap();
+        let squared_sum =
+            edit_distance_squared_sums.get(&edit_distance).unwrap();
 
         let mean = sum / count;
         let variance = (squared_sum - mean * sum) / count;
@@ -141,7 +194,8 @@ fn run(args: Args) -> Result<()> {
         .from_path(&args.output)?;
     wtr.write_record(&header_row)?;
 
-    let mut sorted_edit_distances: Vec<&usize> = edit_distance_counts.keys().collect();
+    let mut sorted_edit_distances: Vec<&usize> =
+        edit_distance_counts.keys().collect();
     sorted_edit_distances.sort();
     for dist in sorted_edit_distances {
         let mut row = vec![dist.to_string()];
