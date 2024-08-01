@@ -167,7 +167,7 @@ def run_strobemer(
         "cargo run --bin strobemer_comparison -- "
         f"{references_file} "
         f"{query_file} "
-        f"-p {protocol}"
+        f"-p {protocol} "
         f"-m {sim_method} "
         f"-o {order} "
         f"-l {strobe_length} "
