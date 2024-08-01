@@ -31,5 +31,5 @@ name = "strobemer_comparison"
 path = "src/bin/strobemer_comparison.rs"
 
 [[bin]]
-name = "generate_string_pairs"
-path = "src/bin/generate_string_pairs.rs"
+name = "alignment"
+path = "src/bin/alignment.rs"

@@ -1,30 +1,17 @@
 use std::time::Instant;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use bio::io::fasta;
 use anyhow::Result;
 use clap::Parser;
-use rusqlite::{self, params, Connection};
+use rusqlite::{self, params};
 
 use alignment_free_methods;
 
 #[derive(Debug, Parser)]
-#[command(about, author, version)]
-struct CommonArgs {
-    #[arg(required = true, value_name = "REF FILE", help = "References FASTA file")]
-    references_file: String,
-    #[arg(required = true, value_name = "QUERY FILE", help = "Query FAST(A/Q) file")]
-    query_file: String,
-    #[arg(short='m', value_name = "METHOD()", help = "E.g. jaccard_similarity")]
-    similarity_method: String,
-    #[arg(short='s', default_value_t = 1, value_name = "INT PARAM")]
-    step: usize
-}
-
-#[derive(Debug, Parser)]
 struct StrobemerArgs {
     #[command(flatten)]
-    common: CommonArgs,
+    common: alignment_free_methods::cli::CommonArgs,
 
     #[arg(short='p', value_name = "STRING")]
     protocol: String,
@@ -46,33 +33,19 @@ fn main() {
     }
 }
 
-fn initialize_comparison_db(filename: PathBuf) -> Result<Connection> {
-    let conn = Connection::open(filename)?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS comparisons (
-            query_name TEXT NOT NULL,
-            reference_name TEXT NOT NULL,
-            seed_name TEXT NOT NULL,
-            score TEXT NOT NULL,
-            time TEXT NOT NULL
-        )",
-        [],
-    )?;
-    Ok(conn)
-}
-
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: StrobemerArgs) -> Result<()> {
-    let seed_name = format!("({},{},{},{},{})-strobemers",
+    let seed_name = format!("({},{},{},{},{})-{}strobemers",
         &args.order,
         &args.strobe_length,
         &args.strobe_window_gap,
         &args.strobe_window_length,
-        &args.common.step
+        &args.common.step,
+        &args.protocol
     );
     let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
-    let comparison_db_conn = initialize_comparison_db(
+    let comparison_db_conn = alignment_free_methods::cli::initialize_comparison_db(
         Path::new(&project_dir).join("tests/outputs/comparisons.db")
     )?;
 
@@ -127,7 +100,6 @@ fn run(args: StrobemerArgs) -> Result<()> {
                 "INSERT OR REPLACE INTO comparisons (query_name, reference_name, seed_name, score, time) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![query_record.id(), reference_record.id(), seed_name, estimated_distance, duration],
             )?;
-
         }
     }
     Ok(())

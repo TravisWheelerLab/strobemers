@@ -6,6 +6,7 @@ use itertools::Itertools;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
+pub mod cli;
 
 // This function simply takes a string and returns the set of k-mers.
 pub fn generate_kmers(sequence: &[u8], k: usize) -> Result<Vec<Vec<char>>> {
