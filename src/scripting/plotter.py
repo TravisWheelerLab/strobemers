@@ -1,30 +1,32 @@
 import statistics
 import random
+import sqlite3
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import seaborn as sns
 
-def plot_line(data_file, method_label):
-    data = pd.read_csv(data_file)
-    plt.errorbar(x=data["edit distance"] / 1000, y=data["mean"],
-        yerr=[data["mean"] - data["lower confidence bound"], data["upper confidence bound"] - data["mean"]],
-        fmt='o',
-        elinewidth=2,
-        capsize=4,
-        label=f'{method_label}')
+def plot_line(conn, seed_name):
+    query = f"""
+        SELECT 
+            q1.query_name, 
+            q1.reference_name, 
+            q1.score AS alignment_score, 
+            q2.score AS method_score
+        FROM 
+            comparisons q1
+        JOIN 
+            comparisons q2 
+        ON 
+            q1.query_name = q2.query_name AND q1.reference_name = q2.reference_name
+        WHERE 
+            q1.seed_name = 'alignment' AND q2.seed_name = '{seed_name}';"""
+    data = pd.read_sql_query(query, conn)
+    
+    sns.scatterplot(x='alignment_score', y=f'method_score', data=data)
+    plt.legend(['(Alignment Score, Strobemers Score)'], loc='upper left')
     plt.grid(True)
-
-
-def plot_log_line(data_file, method_label):
-    data = pd.read_csv(data_file)
-    plt.errorbar(x=data["edit distance"] / 1000, y=np.log(data["mean"]),
-        yerr=[np.log(data["mean"]) - np.log(data["lower confidence bound"]), np.log(data["upper confidence bound"]) - np.log(data["mean"])],
-        fmt='o',
-        elinewidth=2,
-        capsize=4,
-        label=f'{method_label}')
-    plt.grid(True)
+    print(seed_name)
 
 def gapmer_line(db_size, k, gaps, step):
     data_file = ("../../tests/outputs/"
@@ -38,13 +40,9 @@ def gapmer_line(db_size, k, gaps, step):
     )
     plot_line(data_file, f"{gaps}-gap {k}-mers, step={step}")
 
-def alignment_line():
-    data_file = "../../tests/outputs/" +\
-        "data_2001/" +\
-        "alignment/" +\
-        "data.csv"
-
-    plot_line(data_file, "Levenshtein edit distance")
+def alignment_line(conn):
+    # Execute the query and load the result into a pandas DataFrame    
+    plot_line(conn, "alignment")
 
 
 def kmer_line(db_size, k, step):
@@ -78,28 +76,19 @@ def plot_spaced_kmers():
         for spaces in [1, 2]:
             spaced_kmer_line(2001, k, spaces, 1)
     
-def strobemer_line(db_size, order, strobe_length, strobe_window_gap, strobe_window_length, step):
-    data_file = ("../../tests/outputs/"
-        f"data_{db_size}/"
-        "strobemer/"
-        "jaccard_similarity/"
-        f"order_{order}/"
-        f"strobe_length_{strobe_length}/"
-        f"strobe_window_gap_{strobe_window_gap}/"
-        f"strobe_window_length_{strobe_window_length}/"
-        f"step_{step}/"
-        "data.csv"
-    )
-    plot_log_line(data_file, f"({order}, {strobe_length}, {strobe_window_gap}, {strobe_window_length}, {step})-strobemer")
+def strobemer_line(conn, order, strobe_length, strobe_window_gap, strobe_window_length, step, method):
+
+    plot_line(conn, f"({order},{strobe_length},{strobe_window_gap},{strobe_window_length},{step})-{method}strobemers")
 
 
-def plot_strobemers():
+def plot_strobemers(conn):
     for order in [2]:
         for strobe_length in [5]:
             for strobe_window_gap in [0]:
                 for strobe_window_length in [40]:
-                    for step in [1]:
-                        strobemer_line(2001, order, strobe_length, strobe_window_gap, strobe_window_length, step)
+                    for step in [3]:
+                        for method in ['rand']:
+                            strobemer_line(conn, order, strobe_length, strobe_window_gap, strobe_window_length, step, method)
 
 def main():
     fontdict = {'fontsize': 15}
@@ -108,8 +97,11 @@ def main():
     plt.xlabel("True edit dissimilarity", fontdict=fontdict)
     plt.ylabel("Log(Estimation method)", fontdict=fontdict)
 
-    # Put lines here
-    alignment_line()
+    conn = sqlite3.connect('tests/outputs/comparisons.db')
+    plot_strobemers(conn)
+    plt.yscale('log')
+
+
     plt.legend()
     plt.show()
 
