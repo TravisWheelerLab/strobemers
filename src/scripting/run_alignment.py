@@ -1,0 +1,16 @@
+import os
+
+def run_alignment(references_file, query_file):
+
+    command = (
+        "cargo run --bin alignment -- "
+        f"{references_file} "
+        f"{query_file} "
+    )
+    print(f"Executing: {command}")
+    os.system(command)
+
+def alignment():
+    run_alignment("artificial.fasta", "DF000000975.fa")
+    
+alignment()
