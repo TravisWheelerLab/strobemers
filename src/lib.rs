@@ -2,14 +2,16 @@ use anyhow::{bail, ensure, Result};
 use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 use std::collections::{HashMap, HashSet};
+use std::os::unix::net;
+use std::vec;
 use itertools::Itertools;
-use rand::seq::SliceRandom;
+use rand::seq::{self, SliceRandom};
 use rand::thread_rng;
 pub mod cli;
 
 
-pub struct SeedObject <'a> {
-    pub identifier: &'a [u8],
+pub struct SeedObject {
+    pub identifier: u64,
     pub ref_index: usize, // I have no idea what this is, it's just stored here for reference.
     pub local_index: usize,
     pub word_indices: Vec<usize>
@@ -33,22 +35,38 @@ static SEQ_NT4_TABLE: [u8; 256] = {
 // This function takes a string represented as a slice of u8 and returns the set of k-mers.
 pub fn generate_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<SeedObject>> {
     let mut kmers = vec![];
+    let mask: u64 = (1 << (2 * k)) - 1; // 2 * k 1's
+    let mut kmer_bits = 0_u64;
+    let mut count = 0;
+    let mut l = 0; // how many characters we have "loaded"
 
-    if k > sequence.len() {
-        bail!(
-            "K ({}) is less than string length {}",
-            k,
-            sequence.len()
-        );
-    }
-    let range = 0..=(sequence.len() - k);
-    for i in range {
-        kmers.push(SeedObject {
-            identifier: &sequence[i..i + k],
-            ref_index: ref_index,
-            local_index: i,
-            word_indices: vec![]
-        });
+    for i in 0..=sequence.len()-1 {
+        let i_char = sequence.get(i).unwrap();
+        if *i_char < 4 { // Valid nucleotide (not "N", which I have no idea what N is anyway)
+            kmer_bits = (kmer_bits.wrapping_shl(2) | *i_char as u64) & mask;
+            /* Step 1: kmer_bits.wrapping_shl(2)
+            // * shift character-encoding bits 1 character (2 bits) up the u64 kmer representation
+            // Step 2: | *i_char as u64
+            // * Note: the 2 bits that wrap around will always be zero (see step 3)
+            // * i_char is really just a u2. Remember that the first two bits are zero.
+            // * Thus, the bitwise-OR copies the i_char information to the first two bits of the u64!
+            // Step 3: & mask
+            // * Cut off the character "left behind" (turn it into 00) */
+            l += 1;
+            if l >= k { // we have at least k characters loaded into kmer_bits
+                kmers.push(SeedObject {
+                    identifier: kmer_bits,
+                    ref_index: ref_index,
+                    local_index: i,
+                    word_indices: vec![],
+                });
+                count += 1;
+            }
+        }
+        else { // if there is an "N", restart
+            l = 0;
+            kmer_bits = 0; 
+        }
     }
     Ok(kmers)
 }
@@ -108,43 +126,6 @@ pub fn generate_masked_seeds(
     Ok(masked_seeds)
 }
 
-/* This function generates a set of minimizers from a string. It uses my_hash_function
- * with a set seed (69). It only uses ONE hash function.
- */
-pub fn generate_minimizers(
-    seq: &[u8],
-    k: usize,
-    w: usize,
-    step: usize,
-    hash_function: fn(&Vec<char>, u64) -> u64,
-    seed: u64
-) -> Result<Vec<Vec<char>>> {
-    if k > w {bail!("k ({}) > w ({})", k, w);}
-    if w > seq.len() {bail!("w ({}) > sequence length ({})", w, seq.len());}
-
-    let mut minimizers: Vec<Vec<char>> = Vec::new();
-    for idx in (0..seq.len() - w + 1).step_by(step) {
-        let window = &seq[idx..idx + w];
-        let minimizer = generate_single_minimizer(window, k, hash_function, seed)?;
-        minimizers.push(minimizer);
-    }
-    Ok(minimizers)
-}
-
-pub fn generate_single_minimizer(
-    window: &[u8],
-    k: usize,
-    hash_function: fn(&Vec<char>, u64) -> u64,
-    seed: u64
-) -> Result<Vec<char>> {
-    let kmers = generate_kmers(window, k)?;
-    let minimizer = kmers
-            .iter()
-            .min_by_key(|&item| hash_function(item, seed))
-            .unwrap();
-    Ok(minimizer.to_vec())
-}
-
 /* This is a simple hash function that maps items (kmers) to u64 integers.
 * It uses a seed, so this is technically a series of hash functions.
 */
@@ -183,87 +164,57 @@ fn my_hash_function (item: &Vec<char>, seed: u64) -> u64 {
 /* HELPER FUNCTION FOR strobemer_euclidean_distance()
  * This function generates a string's set of strobemers.
  */
-pub fn generate_randstrobemers(
+pub fn generate_2_order_randstrobemers(
     seq: &[u8],
     order: usize,
     strobe_length: usize,
-    strobe_window_gap: usize,
-    strobe_window_length: usize,
+    w_min: usize,
+    w_max: usize,
     step: usize,
-    hash_function: Option<fn(&Vec<char>, u64) -> u64>
+    hash_function: Option<fn(&Vec<char>, u64) -> u64>,
+    ref_index: usize,
 ) -> Result<Vec<SeedObject>> {
     let seed_vector: Vec<SeedObject> = Vec::new();
-    ensure!(strobe_window_length > strobe_length, "Strobe length is equal or greater to the window it is selected from.");
 
-    let strobemer_span = strobe_length +
-        (order - 1) * (strobe_window_length + strobe_window_gap);
-    if seq.len() < strobemer_span { // the sequence is just too short...
-        return Ok(seed_vector)
+    if seq.len() < w_max { // Sahlin's code -- it probably serves a purpose, IDK what tho
+        return Ok(seed_vector);
     }
-    let x = b"oo";
 
     // 
-    let mask: u64 = (1 << (2 * strobe_length)) - 1;
-    let x = 0_u64;
+    let first_strobe_mask: u64 = (1 << (2 * strobe_length)) - 1;
+    let x = 2_u64.pow(16) - 1;
 
+    let lmer_hash_at_index: HashMap<usize, u64> = hash_string_to_kmers(&seq, strobe_length);
 
-    let last_strobemer_start_index = seq.len() - strobemer_span; // try + 1?
-    for idx in (0..=last_strobemer_start_index).step_by(step) {
-        let strobe_hash
+    for idx in 0..=seq.len() {
+        let first_strobe_hash = lmer_hash_at_index[idx];
 
-        strobemers.push(strobemer);
-    }
-    Ok(strobemers)
-}
+        // idx is the start of each strobemer.
+        let strobe_start_range = {
+            if idx + w_max <= seq.len() - 1 {
+                idx + w_min..idx + w_max
+            } else if idx + w_min + 1 < seq.len() && seq.len() <= idx + w_max {
+            idx + w_min..seq.len() - 1
+            } else {
+                return Ok(seed_vector)
+            }
+        };
 
-pub fn generate_minstrobemer(
-    strobemer_window: &[u8],
-    order: usize,
-    strobe_length: usize,
-    strobe_window_gap: usize,
-    strobe_window_length: usize,
-    hash_function: fn(&Vec<char>, u64) -> u64,
-    ref_index: usize,
-) -> Result<SeedObject> {
-    let first_strobe = &strobemer_window[0..strobe_length];
-    strobemer.extend(first_strobe);
-    for n in 1..order {
-        let window_end = strobe_length + (strobe_window_gap + strobe_window_length) * n;
-        let window_start = window_end - strobe_window_length;
-        let strobe_window = &strobemer_window[window_start..window_end];
-        let strobe = generate_single_minimizer(strobe_window, strobe_length, hash_function, 69)?;
-        strobemer.extend(strobe);
-    }
-    Ok(strobemer)
-}
-
-pub fn generate_randstrobemer(
-    strobemer_window: &[u8],
-    order: usize,
-    strobe_length: usize,
-    strobe_window_gap: usize,
-    strobe_window_length: usize,
-    hash_function: fn(&Vec<char>, u64) -> u64
-) -> Result<Vec<char>> {
-    let mut strobemer: Vec<char> = Vec::new();
-    let first_strobe = std::str::from_utf8(&strobemer_window[0..strobe_length])?;
-    let first_strobe: Vec<char> = first_strobe.chars().collect();
-    strobemer.extend(first_strobe);
-    for n in 1..order {
-        let window_end = strobe_length + (strobe_window_gap + strobe_window_length) * n;
-        let window_start = window_end - strobe_window_length;
-        let strobe_window = &strobemer_window[window_start..window_end];
-
-        let lmers = generate_kmers_with_step(strobe_window, strobe_length, 1)?;
-
-        strobemer = lmers
-            .into_iter()
-            .map(|lmer| vec![strobemer.clone(), lmer].concat())
-            .min_by_key(|mish_mash| hash_function(mish_mash, 69))
+        let (next_strobe_index, next_strobe_hash) = strobe_start_range
+            .map(|i| (i, lmer_hash_at_index.get(&i).unwrap()))
+            .min_by_key(|&(_, hash)| hash ^ first_strobe_hash) // need to take first strobe into account
             .unwrap();
+
+        seed_vector.push(SeedObject {
+            identifier: first_strobe_hash/2 + next_strobe_hash/3,
+            ref_index: ref_index,
+            local_index: idx,
+            word_indices: vec![next_strobe_index],
+        });
     }
-    Ok(strobemer)
+    Ok(seed_vector)
 }
+
 
 /* This is the final goal of my project! */
 pub fn tensor_slide_sketch(_base_seq: &[char],
