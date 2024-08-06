@@ -5,19 +5,33 @@ use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-
 pub mod cli;
 
-// This function simply takes a string and returns the set of k-mers.
-pub fn generate_kmers(sequence: &[u8], k: usize) -> Result<Vec<Vec<char>>> {
-    generate_kmers_with_step(sequence, k, 1)
+
+pub struct SeedObject <'a> {
+    pub identifier: &'a [u8],
+    pub ref_index: usize, // I have no idea what this is, it's just stored here for reference.
+    pub local_index: usize,
+    pub word_indices: Vec<usize>
 }
 
-pub fn generate_kmers_with_step(
-    sequence: &[u8],
-    k: usize,
-    step: usize
-) -> Result<Vec<Vec<char>>> {
+static SEQ_NT4_TABLE: [u8; 256] = {
+    let mut table = [4u8; 256]; // Default all values to 4 (error or invalid character)
+
+    table[b'A' as usize] = 0;
+    table[b'C' as usize] = 1;
+    table[b'G' as usize] = 2;
+    table[b'T' as usize] = 3;
+    table[b'a' as usize] = 0;
+    table[b'c' as usize] = 1;
+    table[b'g' as usize] = 2;
+    table[b't' as usize] = 3;
+
+    table
+};
+
+// This function takes a string represented as a slice of u8 and returns the set of k-mers.
+pub fn generate_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<SeedObject>> {
     let mut kmers = vec![];
 
     if k > sequence.len() {
@@ -27,31 +41,19 @@ pub fn generate_kmers_with_step(
             sequence.len()
         );
     }
-
-    for i in (0..=(sequence.len() - k)).step_by(step) {
-        let kmer: Vec<char> = std::str::from_utf8(&sequence[i..i + k])?.chars().collect();
-        kmers.push(kmer);
+    let range = 0..=(sequence.len() - k);
+    for i in range {
+        kmers.push(SeedObject {
+            identifier: &sequence[i..i + k],
+            ref_index: ref_index,
+            local_index: i,
+            word_indices: vec![]
+        });
     }
     Ok(kmers)
 }
 
 
-pub fn generate_n_masks(k: usize, spaces: usize, n: usize) -> Vec<Vec<char>> {
-    let mut rng = thread_rng();
-    let mut masks = Vec::new();
-    let mut initial_mask = vec!['1'; k - 2];
-    initial_mask.extend(vec!['0'; spaces]);
-    for _ in 0..n {
-        let mut perm = initial_mask.clone();
-        perm.shuffle(&mut rng);
-        let mask: Vec<char> = std::iter::once('1')
-            .chain(perm.iter().copied())
-            .chain(std::iter::once('1'))
-            .collect();
-        masks.push(mask);
-    }
-    masks
-}
 pub fn generate_g_spaced_kmers_with_step(
     sequence: &[u8],
     k: usize,
@@ -181,7 +183,7 @@ fn my_hash_function (item: &Vec<char>, seed: u64) -> u64 {
 /* HELPER FUNCTION FOR strobemer_euclidean_distance()
  * This function generates a string's set of strobemers.
  */
-pub fn generate_strobemers(
+pub fn generate_randstrobemers(
     seq: &[u8],
     order: usize,
     strobe_length: usize,
@@ -189,29 +191,26 @@ pub fn generate_strobemers(
     strobe_window_length: usize,
     step: usize,
     hash_function: Option<fn(&Vec<char>, u64) -> u64>
-) -> Result<Vec<Vec<char>>> {
+) -> Result<Vec<SeedObject>> {
+    let seed_vector: Vec<SeedObject> = Vec::new();
     ensure!(strobe_window_length > strobe_length, "Strobe length is equal or greater to the window it is selected from.");
 
-    let mut strobemers: Vec<Vec<char>> = Vec::new(); // custom struct to manage slice ownership.
     let strobemer_span = strobe_length +
         (order - 1) * (strobe_window_length + strobe_window_gap);
     if seq.len() < strobemer_span { // the sequence is just too short...
-        return Ok(strobemers)
+        return Ok(seed_vector)
     }
+    let x = b"oo";
+
+    // 
+    let mask: u64 = (1 << (2 * strobe_length)) - 1;
+    let x = 0_u64;
 
 
     let last_strobemer_start_index = seq.len() - strobemer_span; // try + 1?
-
     for idx in (0..=last_strobemer_start_index).step_by(step) {
-        let strobemer_window = &seq[idx..idx + strobemer_span];
-        let strobemer = generate_randstrobemer(
-            strobemer_window,
-            order,
-            strobe_length,
-            strobe_window_gap,
-            strobe_window_length,
-            hash_function.unwrap_or(my_hash_function)
-        )?;
+        let strobe_hash
+
         strobemers.push(strobemer);
     }
     Ok(strobemers)
@@ -223,11 +222,10 @@ pub fn generate_minstrobemer(
     strobe_length: usize,
     strobe_window_gap: usize,
     strobe_window_length: usize,
-    hash_function: fn(&Vec<char>, u64) -> u64
-) -> Result<Vec<char>> {
-    let mut strobemer: Vec<char> = Vec::new();
-    let first_strobe = std::str::from_utf8(&strobemer_window[0..strobe_length])?;
-    let first_strobe: Vec<char> = first_strobe.chars().collect();
+    hash_function: fn(&Vec<char>, u64) -> u64,
+    ref_index: usize,
+) -> Result<SeedObject> {
+    let first_strobe = &strobemer_window[0..strobe_length];
     strobemer.extend(first_strobe);
     for n in 1..order {
         let window_end = strobe_length + (strobe_window_gap + strobe_window_length) * n;
