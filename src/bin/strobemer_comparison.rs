@@ -4,7 +4,6 @@ use std::path::Path;
 use bio::io::fasta;
 use anyhow::Result;
 use clap::Parser;
-use rusqlite::{self, params};
 
 use alignment_free_methods;
 
@@ -36,7 +35,7 @@ fn main() {
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: StrobemerArgs) -> Result<()> {
-    let seed_name = format!("({},{},{},{})-{}strobemers",
+    let _seed_name = format!("({},{},{},{})-{}strobemers",
         &args.order,
         &args.strobe_length,
         &args.w_min,
@@ -44,9 +43,6 @@ fn run(args: StrobemerArgs) -> Result<()> {
         &args.protocol
     );
     let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
-    let comparison_db_conn = alignment_free_methods::cli::initialize_comparison_db(
-        Path::new(&project_dir).join("tests/outputs/comparisons.db")
-    )?;
 
     let query_reader = fasta::Reader::from_file(
         Path::new(&project_dir)
@@ -88,15 +84,11 @@ fn run(args: StrobemerArgs) -> Result<()> {
             io::stdout().flush().unwrap();
             
             let start = Instant::now();
-            let estimated_distance: f64 = alignment_free_methods::jaccard_similarity(
+            let _estimated_distance: f64 = alignment_free_methods::jaccard_similarity(
                 &reference_seeds,
                 &query_seeds,
             )?;
-            let duration = start.elapsed().subsec_millis();
-            comparison_db_conn.execute(
-                "INSERT OR REPLACE INTO comparisons (query_name, reference_name, seed_name, score, time) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![query_record.id(), reference_record.id(), seed_name, estimated_distance, duration],
-            )?;
+            let _duration = start.elapsed().subsec_millis();
         }
     }
     Ok(())
