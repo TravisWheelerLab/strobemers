@@ -6,7 +6,7 @@ use std::vec;
 use itertools::Itertools;
 pub mod cli;
 
-
+#[derive(Debug)]
 pub struct SeedObject {
     pub identifier: u64,
     pub ref_index: usize, // I have no idea what this is, it's just stored here for reference.
@@ -14,7 +14,13 @@ pub struct SeedObject {
     pub word_indices: Vec<usize>
 }
 
-static _SEQ_NT4_TABLE: [u8; 256] = {
+impl PartialEq for SeedObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.identifier == other.identifier
+    }
+}
+
+static SEQ_NT4_TABLE: [u8; 256] = {
     let mut table = [4u8; 256]; // Default all values to 4 (error or invalid character)
 
     table[b'A' as usize] = 0;
@@ -25,22 +31,24 @@ static _SEQ_NT4_TABLE: [u8; 256] = {
     table[b'c' as usize] = 1;
     table[b'g' as usize] = 2;
     table[b't' as usize] = 3;
+    table[b'N' as usize] = 4;
 
     table
 };
 
 // This function takes a string represented as a slice of u8 and returns the set of k-mers.
-pub fn generate_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<SeedObject>> {
+pub fn seq_to_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<SeedObject>> {
     let mut kmers = vec![];
-    let mask: u64 = (1 << (2 * k)) - 1; // 2 * k 1's
+    let mask: u64 = (0b1 << (2 * k)) - 1; // 2 * k 1's
     let mut kmer_bits = 0_u64;
     let mut _count = 0;
     let mut l = 0; // how many characters we have "loaded"
 
     for i in 0..=sequence.len()-1 {
-        let i_char = sequence.get(i).unwrap();
-        if *i_char < 4 { // Valid nucleotide (not "N", which I have no idea what N is anyway)
-            kmer_bits = (kmer_bits.wrapping_shl(2) | *i_char as u64) & mask;
+        let char_utf8 = sequence.get(i).unwrap(); // this is utf-8 encoded (e.g. 0b65 is 'A')
+        let char_u2_as_u8 = SEQ_NT4_TABLE[*char_utf8 as usize];
+        if char_u2_as_u8 < 4 { // Valid nucleotide (not "N", which I have no idea what N is anyway)
+            kmer_bits = (kmer_bits.wrapping_shl(2) | char_u2_as_u8 as u64) & mask;
             /* Step 1: kmer_bits.wrapping_shl(2)
             // * shift character-encoding bits 1 character (2 bits) up the u64 kmer representation
             // Step 2: | *i_char as u64
@@ -123,33 +131,40 @@ pub fn generate_masked_seeds(
     Ok(masked_seeds)
 }
 
-fn hash_u64(item: &u64, mask: &u64) -> u64 {
-    let mut key = (item + (item << 21)) & mask; // key = (key << 21) - key - 1;
+/*
+Takes a u64 (a bit-representation of a seed) which we want to hash.
+The mask restricts the output hash to 0..= 2*k. I don't really know why.
+ */
+fn hash64(item: &u64, mask: &u64) -> u64 {
+    let mut key = !item.saturating_add(item << 21) & mask; // key = (key << 21) - key - 1;
     key = key ^ key >> 24;
-    key = ((key + (key << 3)) + (key << 8)) & mask; // key * 265
+    key = key.saturating_add(key << 3) + (key << 8) & mask; // key * 265
     key = key ^ key >> 14;
-    key = ((key + (key << 2)) + (key << 4)) & mask; // key * 21
+    key = key.saturating_add(key << 2) + (key << 4) & mask; // key * 21
     key = key ^ key >> 28;
-    key = (key + (key << 31)) & mask;
+    key = key.saturating_add(key << 31) & mask;
     key
 }
 
-fn hash_string_to_kmers(seq: &[u8], k: usize) -> HashMap<usize, u64> {
+fn string_kmer_hashes(seq: &[u8], k: usize) -> HashMap<usize, u64> {
     let mut hash_at_idx = HashMap::new();
 
-    let mask = (1 >> (2 * k)) - 1;
+    let mask = (1 << (2 * k)) - 1;
     let mut kmer_bits = 0_u64;
     
     let mut _count = 0;
     let mut l = 0;
     for idx in 0..seq.len() {
-        if seq[idx] < 4 { // valid character
-            kmer_bits = (kmer_bits << 2 | seq[idx] as u64) & mask;
+        let char_utf8 = seq.get(idx).unwrap();
+        let char_u2_as_u8 = SEQ_NT4_TABLE[*char_utf8 as usize];
+
+        if char_u2_as_u8 < 4 { // valid character (not 'N')
+            kmer_bits = (kmer_bits << 2 | char_u2_as_u8 as u64) & mask;
             l += 1;
             if l >= k {
                 _count += 1;
-                let hash = hash_u64(&kmer_bits, &mask);
-                hash_at_idx.insert(idx, hash); // it will never have an entry
+                let hash = hash64(&kmer_bits, &mask);
+                hash_at_idx.insert(idx + 1 - k, hash); // it will never have an entry
             }
         }
     }
@@ -199,7 +214,7 @@ pub fn seq_to_randstrobemers(
         return Ok(seed_vector);
     }
 
-    let lmer_hash_at_index: HashMap<usize, u64> = hash_string_to_kmers(&seq, strobe_length);
+    let lmer_hash_at_index: HashMap<usize, u64> = string_kmer_hashes(&seq, strobe_length);
     // here, we compute the hash of every l-mer in the string. That way, multiple computations
     // aren't needed.
 
@@ -247,7 +262,6 @@ pub fn tensor_slide_sketch(_base_seq: &[char],
     unimplemented!();
 }
 
-// The following contains set and vector similarity methods
 pub fn frequency_vectors<'a>(base_seed_bag: &'a Vec<SeedObject>, mod_seed_bag: &'a Vec<SeedObject>
 ) -> (HashMap<&'a u64, f64>, HashMap<&'a u64, f64>) {
     let mut base_seed_counts = HashMap::new();
@@ -285,7 +299,6 @@ pub fn euclidean_distance(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<Se
 pub fn cosine_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
 ) -> Result<f64> {
     let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
-    
     let mut base_magnitude = 0.0;
     let mut mod_magnitude = 0.0;
     let mut dot_product = 0.0;
@@ -331,4 +344,119 @@ pub fn minhash_similarity(base_seed_bag: &Vec<Vec<char>>, mod_seed_bag: &Vec<Vec
         if base_signature == mod_signature {agreement_hash += 1}
     }
     Ok(agreement_hash as f64 / total_hash as f64)
+}
+
+
+/* Tests for string_kmer_hashes and hash64. */
+#[cfg(test)]
+mod hashing_tests {
+    use std::collections::HashMap;
+    use crate::string_kmer_hashes;
+    use crate::hash64;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_string_kmer_hashes_basic(){
+        let k = 2;
+        let mask = (1 << (2 * k)) - 1;
+        let kmer_hash_at_idx = string_kmer_hashes(b"ACGT", k);
+        let mut my_hash_hap = HashMap::new();
+        my_hash_hap.insert(0, hash64(&0b0001, &mask));
+        my_hash_hap.insert(1, hash64(&0b0110, &mask));
+        my_hash_hap.insert(2, hash64(&0b1011, &mask));
+        assert_eq!(kmer_hash_at_idx, my_hash_hap);
+    }
+    #[test]
+    fn test_hash64_basic() {
+        let hash = hash64(&(0b1011 as u64), &(0b1111 as u64));
+        assert_eq!(hash, 0b100);
+    }
+}
+
+/* Tests for jaccard_similarity. */
+#[cfg(test)]
+mod comparison_tests {
+    use anyhow::Result;
+    use crate::jaccard_similarity;
+    use crate::seq_to_kmers;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_jaccard_similarity_basic() -> Result<()>{
+        let k = 2;
+        let ref_index = 0;
+        let kmers1 = seq_to_kmers(b"AAAA", k, ref_index)?;
+        let kmers2 = seq_to_kmers(b"AAAA", k, ref_index)?;
+        let estimated_similarity = jaccard_similarity(&kmers1, &kmers2)?;
+        assert_eq!(estimated_similarity, 1.0);
+        Ok(())
+    }
+}
+
+/* Tests for seq_to_kmers. */
+#[cfg(test)]
+mod seq_to_kmers_tests {
+    use pretty_assertions::assert_eq;
+    use anyhow::Result;
+
+    use crate::seq_to_kmers;
+
+    #[test]
+    fn test_generate_kmers_basic() -> Result<()> {
+        let kmer_identifiers: Vec<u64> = seq_to_kmers(
+            b"ACGT",
+            2,
+            0
+        )?
+            .iter().map(|seed_object| seed_object.identifier)
+            .collect();
+        let expected: Vec<u64> = vec![0b0001, 0b0110, 0b1011];
+        assert_eq!(kmer_identifiers, expected);
+        Ok(())
+    }
+}
+
+/* Tests for seq_to_strobemers */
+#[cfg(test)]
+mod seq_to_strobemers_tests {
+    use pretty_assertions::assert_eq;
+    use anyhow::Result;
+
+    use crate::seq_to_randstrobemers;
+
+    #[test]
+    fn test_seq_to_strobemers_basic() -> Result<()> {
+        let strobemer_identifiers: Vec<u64> = seq_to_randstrobemers(
+            b"AAAAAA",
+            2, // order
+            2, // strobe len
+            0, // window gap
+            2, // window len
+            1
+        )?
+            .iter().map(|seed_object| seed_object.identifier)
+            .collect();
+        let expected = vec![0b11, 0b11, 0b11];
+        assert_eq!(strobemer_identifiers, expected);
+        Ok(())
+    }
+
+
+    #[test]
+    fn test_seq_to_strobemers_order_3_basic() -> Result<()> {
+        let strobemer_identifiers: Vec<u64> = seq_to_randstrobemers(
+            b"CAAAAAAA",
+            3, // order
+            2, // strobe len
+            0, // window gap
+            2, // window len
+            1
+        )?
+            .iter().map(|seed_object| seed_object.identifier)
+            .collect();
+        let expected = vec![0b11, 0b11, 0b11];
+        assert_eq!(strobemer_identifiers, expected);
+        Ok(())
+    }
+
 }

@@ -9,4 +9,4 @@ for f in files:
         f"{subdir}/{f}_full.fastq",
         "-S", f"{subdir}/{f}_stats.tsv",
         "-r", f"{subdir}/{f}_pychopper.pdf"]
-    )
+    ) 

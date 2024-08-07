@@ -1,35 +1,19 @@
-
-def run_kmer(
-    db_size,
-    sim_method,
-    k,
-    step
-):
-    outpath = (f"../../tests/outputs/"
-        f"data_{db_size}/"
-        f"kmer/{sim_method}/"
-        f"k_{k}/"
-        f"step_{step}/"
-    )
-    print(f"Creating output directory...")
-    os.system(f"mkdir -p {outpath}")
+import os
+def run_kmer(references_file, query_file, k):
     command = (
-        "cargo run --bin generate_comparison_data -- "
-        f"-i ../../tests/inputs/sequences_{db_size}.csv "
-        f"-o {outpath}data.csv "
-        f"--representation-method kmer "
-        f"--similarity-method {sim_method} "
+        "cargo run --bin kmer_comparison -- "
+        f"{references_file} "
+        f"{query_file} "
         f"-k {k} "
-        f"--step {step} "
     )
     print(f"Executing: {command}")
     os.system(command)
 
-def kmers(k, step):
+def kmers():
     run_kmer(
-        db_size=2001,
-        sim_method="jaccard_similarity",
-        k=k,
-        step=step
+        references_file="data/sahlin_data/cDNA/ERR3588905_1.fastq",
+        query_file="data/sahlin_data/cDNA/ERR3588905_1_full.fastq",
+        k=30,
     )
 
+kmers()

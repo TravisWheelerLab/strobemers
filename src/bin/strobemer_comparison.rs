@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 use rusqlite::{self, params};
 
-use alignment_free_methods::{self, SeedObject};
+use alignment_free_methods;
 
 #[derive(Debug, Parser)]
 struct StrobemerArgs {
@@ -75,7 +75,7 @@ fn run(args: StrobemerArgs) -> Result<()> {
             //let reference_seeds: Vec<Vec<char>> = match seeds_db_conn.prepare(
             //    "SELECT seed FROM seeds WHERE seq_name = ?1 AND seed_name = ?2")?
             //    .exists(params![reference_record.id(), seed_name])? {
-            let reference_seeds: Vec<SeedObject> = alignment_free_methods::seq_to_randstrobemers(
+            let reference_seeds = alignment_free_methods::seq_to_randstrobemers(
                 reference_record.seq(),
                 args.order.clone(),
                 args.strobe_length.clone(),
