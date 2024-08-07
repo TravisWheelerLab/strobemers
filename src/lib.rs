@@ -1,9 +1,6 @@
 use anyhow::{ensure, Result};
-use seahash::SeaHasher;
-use std::hash::{Hash, Hasher};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::vec;
-use itertools::Itertools;
 pub mod cli;
 
 #[derive(Debug)]
@@ -74,61 +71,6 @@ pub fn seq_to_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<S
         }
     }
     Ok(kmers)
-}
-
-
-pub fn generate_g_spaced_kmers_with_step(
-    sequence: &[u8],
-    k: usize,
-    spaces: usize,
-    step: usize
-) -> Result<HashMap<Vec<char>, Vec<Vec<char>>>> {
-    ensure!(k + spaces <= sequence.len(), format!(
-        "k + spaces ({:?}) is greater than string length ({:?})", k + spaces, sequence.len())
-    );
-    ensure!(k > 1, format!("k ({:?}) < 2", k));
-
-    let mut spacemers: HashMap<Vec<char>, Vec<Vec<char>>> = Default::default();
-
-    // create an initial mask to permute. Two "care" indices will always exist
-    // at the start and the end of the mask, so we don't permute those.
-    let mut initial_mask = vec!['1'; k - 2];
-    initial_mask.extend(vec!['0'; spaces]);
-    let permutations: HashSet<_> = initial_mask.iter().permutations(initial_mask.len()).collect();
-    for permutation in permutations {
-        let mask: Vec<char> = std::iter::once('1')
-            .chain(permutation.into_iter().copied())
-            .chain(std::iter::once('1'))
-            .collect();
-
-        for i in (0..(sequence.len() - k - spaces + 1)).step_by(step) { // start of window
-            let window = &sequence[i..i+k+spaces];
-            let spacemer = window
-                .iter()
-                .zip(&mask)
-                .filter_map(|(&window_char, &mask_char)| if mask_char == '1' { Some(window_char as char) } else { None })
-                .collect();
-            spacemers.entry(mask.clone()).or_insert(Vec::new()).push(spacemer);
-        }
-    }
-    Ok(spacemers)
-}
-pub fn generate_masked_seeds(
-    sequence: &[char],
-    mask: &Vec<char>,
-    step: usize
-) -> Result<Vec<Vec<char>>> {
-    let mut masked_seeds = Vec::new();
-    for i in (0..sequence.len() - mask.len() + 1).step_by(step) {
-        masked_seeds.push(sequence[i..i+mask.len()].to_vec()
-            .iter()
-            .zip(mask)
-            .filter_map(|(&window_char, &mask_char)| if mask_char == '1' { Some(window_char) } else { None })
-            .collect()
-        );
-    }
-
-    Ok(masked_seeds)
 }
 
 /*
@@ -253,15 +195,6 @@ pub fn seq_to_randstrobemers(
 }
 
 
-/* This is the final goal of my project! */
-pub fn tensor_slide_sketch(_base_seq: &[char],
-    _mod_seq: &[char],
-    _k: usize,
-    _w: usize
-) -> Result<f64> {
-    unimplemented!();
-}
-
 pub fn frequency_vectors<'a>(base_seed_bag: &'a Vec<SeedObject>, mod_seed_bag: &'a Vec<SeedObject>
 ) -> (HashMap<&'a u64, f64>, HashMap<&'a u64, f64>) {
     let mut base_seed_counts = HashMap::new();
@@ -280,40 +213,6 @@ pub fn frequency_vectors<'a>(base_seed_bag: &'a Vec<SeedObject>, mod_seed_bag: &
     (base_seed_counts, mod_seed_counts)
 }
 
-
-pub fn euclidean_distance(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
-) -> Result<f64> {
-    let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
-
-    let mut distance = 0.0;
-    for (item, base_count) in base_item_counts.iter() {
-        let mod_count = mod_item_counts.get(item).unwrap_or(&0.0);
-        distance += (base_count.max(*mod_count) - base_count.min(*mod_count)).powf(2.0);
-    }
-    Ok(distance.sqrt())
-}
-
-/* This function calculates the cosine similarity between two strings' kmeer vectors.
- * cosine similarity = (v1 * v2) / (||v1|| * ||v2||)
- */
-pub fn cosine_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
-) -> Result<f64> {
-    let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
-    let mut base_magnitude = 0.0;
-    let mut mod_magnitude = 0.0;
-    let mut dot_product = 0.0;
-    for (item, base_count) in base_item_counts.iter() {
-        let mod_count = mod_item_counts.get(item).unwrap();
-        base_magnitude += base_count * base_count;
-        mod_magnitude += mod_count * mod_count;
-        dot_product += base_count * mod_count;
-    }
-    if base_magnitude == 0.0 || mod_magnitude == 0.0 {
-        return Ok(0.0);
-    }
-    Ok(dot_product / (base_magnitude.sqrt() * mod_magnitude.sqrt()))
-}
-
 pub fn jaccard_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
 ) -> Result<f64> {
     let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
@@ -326,24 +225,6 @@ pub fn jaccard_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<Se
         intersection += base_count.min(*mod_count) * 2.0;
     }
     Ok(intersection / union)
-}
-
-pub fn minhash_similarity(base_seed_bag: &Vec<Vec<char>>, mod_seed_bag: &Vec<Vec<char>>
-) -> Result<f64> {
-    fn hash_function<T: Hash + ?Sized> (item: &T, seed: u64) -> u64 {
-        let mut hasher = SeaHasher::with_seeds(seed, seed, seed, seed);
-        item.hash(&mut hasher);
-        hasher.finish()
-    }
-    let mut agreement_hash = 0;
-    let mut total_hash = 0;
-    for i in 0..64 {
-        let base_signature = base_seed_bag.iter().map(|item| hash_function(item, i)).min();
-        let mod_signature = mod_seed_bag.iter().map(|item| hash_function(item, i)).min();
-        total_hash += 1;
-        if base_signature == mod_signature {agreement_hash += 1}
-    }
-    Ok(agreement_hash as f64 / total_hash as f64)
 }
 
 
