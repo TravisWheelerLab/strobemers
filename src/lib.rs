@@ -195,7 +195,7 @@ pub fn seq_to_randstrobemers(
 ) -> Result<Vec<SeedObject>> {
     let mut seed_vector: Vec<SeedObject> = Vec::new();
 
-    if seq.len() < w_max { // Sahlin's code -- it probably serves a purpose, IDK what tho
+    if seq.len() < w_max {
         return Ok(seed_vector);
     }
 
@@ -207,24 +207,24 @@ pub fn seq_to_randstrobemers(
         let mut current_strobemer_hash = lmer_hash_at_index[&strobemer_start_idx];
         let mut strobe_indices = vec![strobemer_start_idx];
         for strobe_number in 0..order {
-            let start_idx = strobemer_start_idx + w_min + strobe_number * w_max;
-            let strobe_range = { // The indices which we minimize from to get a strobe
-                if start_idx + w_max <= seq.len() - 1 {
-                    start_idx + w_min..start_idx + w_max
-                } else if start_idx + w_min + 1 < seq.len() && seq.len() <= start_idx + w_max {
-                    start_idx + w_min..seq.len() - 1
+            let end_of_last_window = strobemer_start_idx + strobe_number * w_max;
+            let strobe_selection_range = { // The indices which we minimize from to get a strobe
+                if end_of_last_window + w_max <= seq.len() - 1 {
+                    end_of_last_window + w_min..end_of_last_window + w_max
+                } else if end_of_last_window + w_min + 1 < seq.len() && seq.len() <= end_of_last_window + w_max {
+                    end_of_last_window + w_min..seq.len() - 1
                 } else {
                     return Ok(seed_vector)
                 }
             };
 
-            let (strobe_index, strobemer_hash) = strobe_range
+            let (selected_strobe_index, selected_strobemer_hash) = strobe_selection_range
                 .map(|i| (i, lmer_hash_at_index.get(&i).unwrap() ^ current_strobemer_hash))
-                .min_by_key(|&(_, hash)| hash) // need to take first strobe into account
+                .min_by_key(|&(_, hash)| hash)
                 .unwrap();
             
-            strobe_indices.push(strobe_index);
-            current_strobemer_hash = strobemer_hash;
+            strobe_indices.push(selected_strobe_index);
+            current_strobemer_hash = selected_strobemer_hash;
         }
 
         seed_vector.push(SeedObject {
