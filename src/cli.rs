@@ -13,8 +13,6 @@ pub struct CommonArgs {
     pub query_file: String,
     //#[arg(short='m', value_name = "METHOD()", help = "E.g. jaccard_similarity")] // unused
     //pub similarity_method: String,
-    #[arg(short='s', default_value_t = 1, value_name = "INT PARAM")]
-    pub step: usize
 }
 
 

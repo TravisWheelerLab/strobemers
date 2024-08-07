@@ -6,23 +6,23 @@ use anyhow::Result;
 use clap::Parser;
 use rusqlite::{self, params};
 
-use alignment_free_methods;
+use alignment_free_methods::{self, SeedObject};
 
 #[derive(Debug, Parser)]
 struct StrobemerArgs {
     #[command(flatten)]
     common: alignment_free_methods::cli::CommonArgs,
 
-    #[arg(short='p', value_name = "STRING")]
+    #[arg(short='p', value_name = "STRING", help="Strobemer generation protocol", default_value = "rand")]
     protocol: String,
-    #[arg(short='o', value_name = "INT")]
+    #[arg(short='o', value_name = "INT", help="Strobemer order/how many strobes", default_value_t = 2)]
     order: usize,
-    #[arg(short='l', value_name = "INT", long)]
+    #[arg(short='l', value_name = "INT", help="Strobe length")]
     strobe_length: usize,
-    #[arg(long="w-gap", value_name = "INT")]
-    strobe_window_gap: usize,
-    #[arg(long="w-len", value_name = "INT")]
-    strobe_window_length: usize,
+    #[arg(long="w_min", value_name = "INT", help="w_min: window selection parameter")]
+    w_min: usize,
+    #[arg(long="w_max", value_name = "INT", help="w_max: window selection parameter")]
+    w_max: usize,
 }
 
 // --------------------------------------------------
@@ -36,12 +36,11 @@ fn main() {
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: StrobemerArgs) -> Result<()> {
-    let seed_name = format!("({},{},{},{},{})-{}strobemers",
+    let seed_name = format!("({},{},{},{})-{}strobemers",
         &args.order,
         &args.strobe_length,
-        &args.strobe_window_gap,
-        &args.strobe_window_length,
-        &args.common.step,
+        &args.w_min,
+        &args.w_max,
         &args.protocol
     );
     let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
@@ -57,14 +56,13 @@ fn run(args: StrobemerArgs) -> Result<()> {
     let mut i = 0;
     for query_record in query_reader.records() {
         let query_record = query_record?;
-        let query_seeds = alignment_free_methods::generate_strobemers(
+        let query_seeds = alignment_free_methods::seq_to_randstrobemers(
             query_record.seq(),
             args.order.clone(),
             args.strobe_length.clone(),
-            args.strobe_window_gap.clone(),
-            args.strobe_window_length.clone(),
-            args.common.step.clone(),
-            None
+            args.w_min.clone(),
+            args.w_max.clone(),
+            1
         )?;
         let reference_reader = fasta::Reader::from_file(
             Path::new(&project_dir)
@@ -77,14 +75,13 @@ fn run(args: StrobemerArgs) -> Result<()> {
             //let reference_seeds: Vec<Vec<char>> = match seeds_db_conn.prepare(
             //    "SELECT seed FROM seeds WHERE seq_name = ?1 AND seed_name = ?2")?
             //    .exists(params![reference_record.id(), seed_name])? {
-            let reference_seeds: Vec<Vec<char>> = alignment_free_methods::generate_strobemers(
+            let reference_seeds: Vec<SeedObject> = alignment_free_methods::seq_to_randstrobemers(
                 reference_record.seq(),
                 args.order.clone(),
                 args.strobe_length.clone(),
-                args.strobe_window_gap.clone(),
-                args.strobe_window_length.clone(),
-                args.common.step.clone(),
-                None
+                args.w_min.clone(),
+                args.w_max.clone(),
+                1
             )?;
 
             print!("\rseeds generated:{:?}", i);

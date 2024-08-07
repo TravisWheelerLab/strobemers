@@ -1,12 +1,9 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{ensure, Result};
 use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 use std::collections::{HashMap, HashSet};
-use std::os::unix::net;
 use std::vec;
 use itertools::Itertools;
-use rand::seq::{self, SliceRandom};
-use rand::thread_rng;
 pub mod cli;
 
 
@@ -17,7 +14,7 @@ pub struct SeedObject {
     pub word_indices: Vec<usize>
 }
 
-static SEQ_NT4_TABLE: [u8; 256] = {
+static _SEQ_NT4_TABLE: [u8; 256] = {
     let mut table = [4u8; 256]; // Default all values to 4 (error or invalid character)
 
     table[b'A' as usize] = 0;
@@ -37,7 +34,7 @@ pub fn generate_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec
     let mut kmers = vec![];
     let mask: u64 = (1 << (2 * k)) - 1; // 2 * k 1's
     let mut kmer_bits = 0_u64;
-    let mut count = 0;
+    let mut _count = 0;
     let mut l = 0; // how many characters we have "loaded"
 
     for i in 0..=sequence.len()-1 {
@@ -60,7 +57,7 @@ pub fn generate_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec
                     local_index: i,
                     word_indices: vec![],
                 });
-                count += 1;
+                _count += 1;
             }
         }
         else { // if there is an "N", restart
@@ -126,13 +123,37 @@ pub fn generate_masked_seeds(
     Ok(masked_seeds)
 }
 
-/* This is a simple hash function that maps items (kmers) to u64 integers.
-* It uses a seed, so this is technically a series of hash functions.
-*/
-fn my_hash_function (item: &Vec<char>, seed: u64) -> u64 {
-    let mut hasher = SeaHasher::with_seeds(seed, seed, seed, seed);
-    item.hash(&mut hasher);
-    hasher.finish()
+fn hash_u64(item: &u64, mask: &u64) -> u64 {
+    let mut key = (item + (item << 21)) & mask; // key = (key << 21) - key - 1;
+    key = key ^ key >> 24;
+    key = ((key + (key << 3)) + (key << 8)) & mask; // key * 265
+    key = key ^ key >> 14;
+    key = ((key + (key << 2)) + (key << 4)) & mask; // key * 21
+    key = key ^ key >> 28;
+    key = (key + (key << 31)) & mask;
+    key
+}
+
+fn hash_string_to_kmers(seq: &[u8], k: usize) -> HashMap<usize, u64> {
+    let mut hash_at_idx = HashMap::new();
+
+    let mask = (1 >> (2 * k)) - 1;
+    let mut kmer_bits = 0_u64;
+    
+    let mut _count = 0;
+    let mut l = 0;
+    for idx in 0..seq.len() {
+        if seq[idx] < 4 { // valid character
+            kmer_bits = (kmer_bits << 2 | seq[idx] as u64) & mask;
+            l += 1;
+            if l >= k {
+                _count += 1;
+                let hash = hash_u64(&kmer_bits, &mask);
+                hash_at_idx.insert(idx, hash); // it will never have an entry
+            }
+        }
+    }
+    hash_at_idx
 }
 
 /// This function generates a string's set of strobemers. Strobemers
@@ -164,52 +185,53 @@ fn my_hash_function (item: &Vec<char>, seed: u64) -> u64 {
 /* HELPER FUNCTION FOR strobemer_euclidean_distance()
  * This function generates a string's set of strobemers.
  */
-pub fn generate_2_order_randstrobemers(
+pub fn seq_to_randstrobemers(
     seq: &[u8],
     order: usize,
     strobe_length: usize,
     w_min: usize,
     w_max: usize,
-    step: usize,
-    hash_function: Option<fn(&Vec<char>, u64) -> u64>,
     ref_index: usize,
 ) -> Result<Vec<SeedObject>> {
-    let seed_vector: Vec<SeedObject> = Vec::new();
+    let mut seed_vector: Vec<SeedObject> = Vec::new();
 
     if seq.len() < w_max { // Sahlin's code -- it probably serves a purpose, IDK what tho
         return Ok(seed_vector);
     }
 
-    // 
-    let first_strobe_mask: u64 = (1 << (2 * strobe_length)) - 1;
-    let x = 2_u64.pow(16) - 1;
-
     let lmer_hash_at_index: HashMap<usize, u64> = hash_string_to_kmers(&seq, strobe_length);
+    // here, we compute the hash of every l-mer in the string. That way, multiple computations
+    // aren't needed.
 
-    for idx in 0..=seq.len() {
-        let first_strobe_hash = lmer_hash_at_index[idx];
+    for strobemer_start_idx in 0..=seq.len() { // strobemer_start_idx is the start of each strobemer.
+        let mut current_strobemer_hash = lmer_hash_at_index[&strobemer_start_idx];
+        let mut strobe_indices = vec![strobemer_start_idx];
+        for strobe_number in 0..order {
+            let start_idx = strobemer_start_idx + w_min + strobe_number * w_max;
+            let strobe_range = { // The indices which we minimize from to get a strobe
+                if start_idx + w_max <= seq.len() - 1 {
+                    start_idx + w_min..start_idx + w_max
+                } else if start_idx + w_min + 1 < seq.len() && seq.len() <= start_idx + w_max {
+                    start_idx + w_min..seq.len() - 1
+                } else {
+                    return Ok(seed_vector)
+                }
+            };
 
-        // idx is the start of each strobemer.
-        let strobe_start_range = {
-            if idx + w_max <= seq.len() - 1 {
-                idx + w_min..idx + w_max
-            } else if idx + w_min + 1 < seq.len() && seq.len() <= idx + w_max {
-            idx + w_min..seq.len() - 1
-            } else {
-                return Ok(seed_vector)
-            }
-        };
-
-        let (next_strobe_index, next_strobe_hash) = strobe_start_range
-            .map(|i| (i, lmer_hash_at_index.get(&i).unwrap()))
-            .min_by_key(|&(_, hash)| hash ^ first_strobe_hash) // need to take first strobe into account
-            .unwrap();
+            let (strobe_index, strobemer_hash) = strobe_range
+                .map(|i| (i, lmer_hash_at_index.get(&i).unwrap() ^ current_strobemer_hash))
+                .min_by_key(|&(_, hash)| hash) // need to take first strobe into account
+                .unwrap();
+            
+            strobe_indices.push(strobe_index);
+            current_strobemer_hash = strobemer_hash;
+        }
 
         seed_vector.push(SeedObject {
-            identifier: first_strobe_hash/2 + next_strobe_hash/3,
+            identifier: current_strobemer_hash,
             ref_index: ref_index,
-            local_index: idx,
-            word_indices: vec![next_strobe_index],
+            local_index: strobemer_start_idx,
+            word_indices: strobe_indices,
         });
     }
     Ok(seed_vector)
@@ -226,25 +248,28 @@ pub fn tensor_slide_sketch(_base_seq: &[char],
 }
 
 // The following contains set and vector similarity methods
-pub fn frequency_vectors<'a>(base_item_bag: &'a Vec<Vec<char>>, mod_item_bag: &'a Vec<Vec<char>>
-) -> (HashMap<&'a Vec<char>, f64>, HashMap<&'a Vec<char>, f64>) {
-    let mut base_item_counts: HashMap<&Vec<char>, f64> = HashMap::new();
-    let mut mod_item_counts: HashMap<&Vec<char>, f64> = HashMap::new();
-    for item in base_item_bag {
-        base_item_counts.entry(item).and_modify(|count| *count += 1.0).or_insert(1.0);
-        mod_item_counts.entry(item).or_insert(0.0);
+pub fn frequency_vectors<'a>(base_seed_bag: &'a Vec<SeedObject>, mod_seed_bag: &'a Vec<SeedObject>
+) -> (HashMap<&'a u64, f64>, HashMap<&'a u64, f64>) {
+    let mut base_seed_counts = HashMap::new();
+    let mut mod_seed_counts = HashMap::new();
+    for seed in base_seed_bag {
+        base_seed_counts.entry(&seed.identifier)
+            .and_modify(|count| *count += 1.0)
+            .or_insert(1.0);
+        mod_seed_counts.entry(&seed.identifier)
+            .or_insert(0.0);
     }
-    for item in mod_item_bag {
-        mod_item_counts.entry(item).and_modify(|count| *count += 1.0).or_insert(1.0);
-        base_item_counts.entry(item).or_insert(0.0);
+    for seed in mod_seed_bag {
+        mod_seed_counts.entry(&seed.identifier).and_modify(|count| *count += 1.0).or_insert(1.0);
+        base_seed_counts.entry(&seed.identifier).or_insert(0.0);
     }
-    (base_item_counts, mod_item_counts)
+    (base_seed_counts, mod_seed_counts)
 }
 
 
-pub fn euclidean_distance(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec<char>>,
+pub fn euclidean_distance(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
 ) -> Result<f64> {
-    let (base_item_counts, mod_item_counts) = frequency_vectors(base_item_bag, mod_item_bag);
+    let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
 
     let mut distance = 0.0;
     for (item, base_count) in base_item_counts.iter() {
@@ -257,9 +282,9 @@ pub fn euclidean_distance(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec
 /* This function calculates the cosine similarity between two strings' kmeer vectors.
  * cosine similarity = (v1 * v2) / (||v1|| * ||v2||)
  */
-pub fn cosine_similarity(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec<char>>
+pub fn cosine_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
 ) -> Result<f64> {
-    let (base_item_counts, mod_item_counts) = frequency_vectors(base_item_bag, mod_item_bag);
+    let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
     
     let mut base_magnitude = 0.0;
     let mut mod_magnitude = 0.0;
@@ -276,9 +301,9 @@ pub fn cosine_similarity(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec<
     Ok(dot_product / (base_magnitude.sqrt() * mod_magnitude.sqrt()))
 }
 
-pub fn jaccard_similarity(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec<char>>
+pub fn jaccard_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
 ) -> Result<f64> {
-    let (base_item_counts, mod_item_counts) = frequency_vectors(base_item_bag, mod_item_bag);
+    let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
 
     let mut intersection = 0.0;
     let mut union = 0.0;
@@ -290,7 +315,7 @@ pub fn jaccard_similarity(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec
     Ok(intersection / union)
 }
 
-pub fn minhash_similarity(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec<char>>
+pub fn minhash_similarity(base_seed_bag: &Vec<Vec<char>>, mod_seed_bag: &Vec<Vec<char>>
 ) -> Result<f64> {
     fn hash_function<T: Hash + ?Sized> (item: &T, seed: u64) -> u64 {
         let mut hasher = SeaHasher::with_seeds(seed, seed, seed, seed);
@@ -300,8 +325,8 @@ pub fn minhash_similarity(base_item_bag: &Vec<Vec<char>>, mod_item_bag: &Vec<Vec
     let mut agreement_hash = 0;
     let mut total_hash = 0;
     for i in 0..64 {
-        let base_signature = base_item_bag.iter().map(|item| hash_function(item, i)).min();
-        let mod_signature = mod_item_bag.iter().map(|item| hash_function(item, i)).min();
+        let base_signature = base_seed_bag.iter().map(|item| hash_function(item, i)).min();
+        let mod_signature = mod_seed_bag.iter().map(|item| hash_function(item, i)).min();
         total_hash += 1;
         if base_signature == mod_signature {agreement_hash += 1}
     }
