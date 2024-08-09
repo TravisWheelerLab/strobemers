@@ -159,14 +159,15 @@ pub fn seq_to_randstrobemers(
     let lmer_hash_at_index: HashMap<usize, u64> = string_kmer_hashes(&seq, strobe_length);
     // here, we compute the hash of every l-mer in the string. That way, multiple computations
     // aren't needed.
+    // lmer_hash_at_index will be a HashMap containing every l-mer position (i.e. 0..seq.len() - k)
 
     for strobemer_start_idx in 0..=seq.len() { // strobemer_start_idx is the start of each strobemer.
         let mut current_strobemer_hash = lmer_hash_at_index[&strobemer_start_idx];
         let mut strobe_indices = vec![strobemer_start_idx];
-        for strobe_number in 0..order {
-            let end_of_last_window = strobemer_start_idx + strobe_number * w_max;
+        for strobe_number in 0..order - 1 {
+            let end_of_last_window = strobemer_start_idx + strobe_length + strobe_number * w_max;
             let strobe_selection_range = { // The indices which we minimize from to get a strobe
-                if end_of_last_window + w_max <= seq.len() - 1 {
+                if end_of_last_window + w_max <= seq.len() - 15 { // strobemers can fit in the entire window
                     end_of_last_window + w_min..end_of_last_window + w_max
                 } else if end_of_last_window + w_min + 1 < seq.len() && seq.len() <= end_of_last_window + w_max {
                     end_of_last_window + w_min..seq.len() - 1
@@ -178,7 +179,7 @@ pub fn seq_to_randstrobemers(
             let (selected_strobe_index, selected_strobemer_hash) = strobe_selection_range
                 .map(|i| (i, lmer_hash_at_index.get(&i).unwrap() ^ current_strobemer_hash))
                 .min_by_key(|&(_, hash)| hash)
-                .unwrap();
+                .expect("Unable to unwrap min_by_key");
             
             strobe_indices.push(selected_strobe_index);
             current_strobemer_hash = selected_strobemer_hash;
@@ -326,7 +327,7 @@ mod seq_to_strobemers_tests {
     #[test]
     fn test_seq_to_strobemers_order_3_basic() -> Result<()> {
         let strobemer_identifiers: Vec<u64> = seq_to_randstrobemers(
-            b"CAAAAAAA",
+            b"ACGTACGTCGTATATT",
             3, // order
             2, // strobe len
             0, // window gap

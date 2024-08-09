@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 use bio::io::fasta;
@@ -22,22 +23,30 @@ fn main() {
     }
 }
 
+fn create_csv_with_headers(name: String) -> Result<File>{
+    let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
+    let mut file = File::create(format!("{}/data/outputs/{}.csv", project_dir, name))?;
+    writeln!(file, "ref_name,query_name,seed_name,edit_distance,edit_distance_time")?;
+    Ok(file)
+}
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: StrobemerArgs) -> Result<()> {
-    let _seed_name = format!("alignment");
+    let mut csv_file = create_csv_with_headers(String::from("alignment-output"))?;
+    let seed_name = format!("alignment");
     let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
     let query_reader = fasta::Reader::from_file(
         Path::new(&project_dir)
-            .join("tests/inputs")
-            .join(&args.common.query_file))?;
+        .join("data/inputs")
+        .join(&args.common.query_file)
+    )?;
 
     let mut i = 0;
     for query_record in query_reader.records() {
         let query_record = query_record?;
         let reference_reader = fasta::Reader::from_file(
             Path::new(&project_dir)
-                .join("tests/inputs")
+                .join("data/inputs")
                 .join(&args.common.references_file)
         )?;
         for reference_record in reference_reader.records() {
@@ -46,13 +55,21 @@ fn run(args: StrobemerArgs) -> Result<()> {
 
             print!("\rseeds generated:{:?}", i);
             io::stdout().flush().unwrap();
-            
+
             let start = Instant::now();
-            let _estimated_distance = levenshtein(
+            let estimated_distance = levenshtein(
                 query_record.seq(),
                 reference_record.seq(),
             );
-            let _duration = start.elapsed().subsec_millis();
+            let duration = start.elapsed().as_secs_f64();
+
+            writeln!(csv_file, "{},{},{},{},{}",
+                reference_record.id(),
+                query_record.id(),
+                seed_name,
+                estimated_distance,
+                duration
+            )?;
         }
     }
     Ok(())

@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 use bio::io::fasta;
@@ -18,10 +19,14 @@ struct StrobemerArgs {
     order: usize,
     #[arg(short='l', value_name = "INT", help="Strobe length")]
     strobe_length: usize,
-    #[arg(long="w_min", value_name = "INT", help="w_min: window selection parameter")]
+    #[arg(long="w-min", value_name = "INT", help="w-min: window selection parameter")]
     w_min: usize,
-    #[arg(long="w_max", value_name = "INT", help="w_max: window selection parameter")]
+    #[arg(long="w-max", value_name = "INT", help="w-max: window selection parameter")]
     w_max: usize,
+
+
+    #[arg(short='e', value_name = "STRING", help="experiment name: output subdirectory to put CSV file")]
+    experiment_name: String,
 }
 
 // --------------------------------------------------
@@ -32,10 +37,19 @@ fn main() {
     }
 }
 
+fn create_csv_with_headers(experiment_name: String) -> Result<File>{
+    let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
+    let mut file = File::create(format!("{}/data/outputs/{}/strobemer-output.csv", project_dir, experiment_name))?;
+    writeln!(file, "ref_name,query_name,seed_name,estimation,ref_time,query_time")?;
+    Ok(file)
+}
+
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: StrobemerArgs) -> Result<()> {
-    let _seed_name = format!("({},{},{},{})-{}strobemers",
+    let mut csv_file = create_csv_with_headers(args.experiment_name)?;
+
+    let seed_name = format!("({}.{}.{}.{})-{}strobemers",
         &args.order,
         &args.strobe_length,
         &args.w_min,
@@ -46,12 +60,13 @@ fn run(args: StrobemerArgs) -> Result<()> {
 
     let query_reader = fasta::Reader::from_file(
         Path::new(&project_dir)
-            .join("tests/inputs")
+            .join("data/inputs")
             .join(&args.common.query_file))?;
 
     let mut i = 0;
     for query_record in query_reader.records() {
         let query_record = query_record?;
+        let query_seed_start_time = Instant::now();
         let query_seeds = alignment_free_methods::seq_to_randstrobemers(
             query_record.seq(),
             args.order.clone(),
@@ -60,17 +75,18 @@ fn run(args: StrobemerArgs) -> Result<()> {
             args.w_max.clone(),
             1
         )?;
+        let query_time = query_seed_start_time.elapsed().as_secs_f64();
+
         let reference_reader = fasta::Reader::from_file(
             Path::new(&project_dir)
-                .join("tests/inputs")
+                .join("data/inputs")
                 .join(&args.common.references_file)
         )?;
         for reference_record in reference_reader.records() {
             i += 1;
             let reference_record = reference_record?;
-            //let reference_seeds: Vec<Vec<char>> = match seeds_db_conn.prepare(
-            //    "SELECT seed FROM seeds WHERE seq_name = ?1 AND seed_name = ?2")?
-            //    .exists(params![reference_record.id(), seed_name])? {
+
+            let reference_seed_start_time = Instant::now();
             let reference_seeds = alignment_free_methods::seq_to_randstrobemers(
                 reference_record.seq(),
                 args.order.clone(),
@@ -79,16 +95,25 @@ fn run(args: StrobemerArgs) -> Result<()> {
                 args.w_max.clone(),
                 1
             )?;
+            let reference_time = reference_seed_start_time.elapsed().as_secs_f64();
 
-            print!("\rseeds generated:{:?}", i);
-            io::stdout().flush().unwrap();
-            
-            let start = Instant::now();
-            let _estimated_distance: f64 = alignment_free_methods::jaccard_similarity(
+            let estimation: f64 = alignment_free_methods::jaccard_similarity(
                 &reference_seeds,
                 &query_seeds,
             )?;
-            let _duration = start.elapsed().subsec_millis();
+
+            print!("\r comparisons done: {:?}", i);
+            io::stdout().flush().unwrap();
+            
+
+            writeln!(csv_file, "{},{},{},{},{},{:?}",
+                reference_record.id(),
+                query_record.id(),
+                seed_name,
+                estimation,
+                reference_time,
+                query_time
+            )?;
         }
     }
     Ok(())
