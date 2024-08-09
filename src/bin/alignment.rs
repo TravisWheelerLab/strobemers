@@ -1,11 +1,11 @@
 use std::time::Instant;
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 use bio::io::fasta;
 use bio::alignment::distance::levenshtein;
 use anyhow::Result;
 use clap::Parser;
-use rusqlite::{self, params};
 
 use alignment_free_methods;
 
@@ -23,26 +23,30 @@ fn main() {
     }
 }
 
+fn create_csv_with_headers(name: String) -> Result<File>{
+    let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
+    let mut file = File::create(format!("{}/data/outputs/{}.csv", project_dir, name))?;
+    writeln!(file, "ref_name,query_name,seed_name,edit_distance,edit_distance_time")?;
+    Ok(file)
+}
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: StrobemerArgs) -> Result<()> {
+    let mut csv_file = create_csv_with_headers(String::from("alignment-output"))?;
     let seed_name = format!("alignment");
     let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
-    let comparison_db_conn = alignment_free_methods::cli::initialize_comparison_db(
-        Path::new(&project_dir).join("tests/outputs/comparisons.db")
-    )?;
-
     let query_reader = fasta::Reader::from_file(
         Path::new(&project_dir)
-            .join("tests/inputs")
-            .join(&args.common.query_file))?;
+        .join("data/inputs")
+        .join(&args.common.query_file)
+    )?;
 
     let mut i = 0;
     for query_record in query_reader.records() {
         let query_record = query_record?;
         let reference_reader = fasta::Reader::from_file(
             Path::new(&project_dir)
-                .join("tests/inputs")
+                .join("data/inputs")
                 .join(&args.common.references_file)
         )?;
         for reference_record in reference_reader.records() {
@@ -51,16 +55,20 @@ fn run(args: StrobemerArgs) -> Result<()> {
 
             print!("\rseeds generated:{:?}", i);
             io::stdout().flush().unwrap();
-            
+
             let start = Instant::now();
             let estimated_distance = levenshtein(
                 query_record.seq(),
                 reference_record.seq(),
             );
-            let duration = start.elapsed().subsec_millis();
-            comparison_db_conn.execute(
-                "INSERT OR REPLACE INTO comparisons (query_name, reference_name, seed_name, score, time) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![query_record.id(), reference_record.id(), seed_name, estimated_distance, duration],
+            let duration = start.elapsed().as_secs_f64();
+
+            writeln!(csv_file, "{},{},{},{},{}",
+                reference_record.id(),
+                query_record.id(),
+                seed_name,
+                estimated_distance,
+                duration
             )?;
         }
     }

@@ -1,5 +1,5 @@
 import os
-
+import os
 def run_alignment(references_file, query_file):
 
     command = (
@@ -11,6 +11,6 @@ def run_alignment(references_file, query_file):
     os.system(command)
 
 def alignment():
-    run_alignment("artificial.fasta", "DF000000975.fa")
+    run_alignment("simulated_data/references1.fasta", "simulated_data/query1.fasta")
     
 alignment()
