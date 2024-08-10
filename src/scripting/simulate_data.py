@@ -1,5 +1,6 @@
 import random
 import Levenshtein
+import os
 
 """ This function creates two fastq files: a query fastq file with 1 random ATCG string length 1000,
 and a reference fastq file with one modified query sequence every 10 edits from 0.0 dissimilarity
@@ -10,14 +11,16 @@ This design creates a progression from similar to dissimilar strings based on ac
 not just number of edits. The only bias is the data is that there is only one query sequence, so I
 recommend using multiple query and reference sequences in your experiments.
 """
-def create_some_data(query_file, reference_file):
-    directory = "data/inputs/simulated_data/"
-    seq1 = "".join([random.choice("ACGT") for i in range(1000)])
-    with open(directory + query_file, 'w') as o:
-        o.write(f">query1 | len_1000 \n{seq1}")
+def create_some_data(query_file, reference_file, experiment_name,
+        seq_len, edit_distance_range):
+    directory = os.path.join("data/inputs", experiment_name)
+    seq1 = "".join([random.choice("ACGT") for i in range(seq_len)])
+    os.mkdir(directory)
+    with open(os.path.join(directory, query_file), 'w') as o:
+        o.write(f">query1 | len_{seq_len} \n{seq1}")
 
-    with open(directory + reference_file, 'w') as o:
-        for edit_distance in range(0, 600, 10):
+    with open(os.path.join(directory, reference_file), 'w') as o:
+        for edit_distance in edit_distance_range:
             seq2 = list(seq1)
             required_distance = edit_distance
             while required_distance > 0:
@@ -34,6 +37,9 @@ def create_some_data(query_file, reference_file):
             o.write(f">query1+{edit_distance} | len_{len(seq2)} +{edit_distance} \n{''.join(seq2)}\n")
             print(f"string {edit_distance/10} generated", end='\r', flush=True)
     
+def experiment1():
+    create_some_data("query.fasta", "references.fasta", "experiment1", 1000, range(0, 600, 10))
+def experiment2():
+    create_some_data("query.fasta", "references.fasta", "experiment2", 10000, range(0, 5000, 10))
 
-create_some_data("query1.fasta", "references1.fasta")
 

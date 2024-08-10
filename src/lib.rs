@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::vec;
 pub mod cli;
@@ -167,7 +167,7 @@ pub fn seq_to_randstrobemers(
         for strobe_number in 0..order - 1 {
             let end_of_last_window = strobemer_start_idx + strobe_length + strobe_number * w_max;
             let strobe_selection_range = { // The indices which we minimize from to get a strobe
-                if end_of_last_window + w_max <= seq.len() - 15 { // strobemers can fit in the entire window
+                if end_of_last_window + w_max <= seq.len() - strobe_length - 1 { // strobemers can fit in the entire window
                     end_of_last_window + w_min..end_of_last_window + w_max
                 } else if end_of_last_window + w_min + 1 < seq.len() && seq.len() <= end_of_last_window + w_max {
                     end_of_last_window + w_min..seq.len() - 1
@@ -179,7 +179,7 @@ pub fn seq_to_randstrobemers(
             let (selected_strobe_index, selected_strobemer_hash) = strobe_selection_range
                 .map(|i| (i, lmer_hash_at_index.get(&i).unwrap() ^ current_strobemer_hash))
                 .min_by_key(|&(_, hash)| hash)
-                .expect("Unable to unwrap min_by_key");
+                .unwrap();
             
             strobe_indices.push(selected_strobe_index);
             current_strobemer_hash = selected_strobemer_hash;
@@ -248,6 +248,27 @@ mod hashing_tests {
         my_hash_hap.insert(2, hash64(&0b1011, &mask));
         assert_eq!(kmer_hash_at_idx, my_hash_hap);
     }
+
+    #[test]
+    fn test_string_kmer_hashes_16(){
+        let k = 16;
+        let mask = (1 << (2 * k)) - 1;
+        let kmer_hash_at_idx = string_kmer_hashes(b"AAAAAAAAAAAAAAAA", k);
+        let mut my_hash_hap = HashMap::new();
+        my_hash_hap.insert(0, hash64(&0b0, &mask));
+        assert_eq!(kmer_hash_at_idx, my_hash_hap);
+    }
+
+    #[test]
+    fn test_string_kmer_hashes_17(){
+        let k = 17;
+        let mask = (1 << (2 * k)) - 1;
+        let kmer_hash_at_idx = string_kmer_hashes(b"AAAAAAAAAAAAAAAAA", k);
+        let mut my_hash_hap = HashMap::new();
+        my_hash_hap.insert(0, hash64(&0b0, &mask));
+        assert_eq!(kmer_hash_at_idx, my_hash_hap);
+    }
+
     #[test]
     fn test_hash64_basic() {
         let hash = hash64(&(0b1011 as u64), &(0b1111 as u64));

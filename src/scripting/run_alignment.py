@@ -1,16 +1,14 @@
 import os
 import os
-def run_alignment(references_file, query_file):
-
+def run_alignment(experiment_name, experiment_version):
     command = (
         "cargo run --bin alignment -- "
-        f"{references_file} "
-        f"{query_file} "
+        f"references.fasta "
+        f"query.fasta "
+        f"-e {experiment_name} "
+        f"-v {experiment_version}"
     )
     print(f"Executing: {command}")
     os.system(command)
 
-def alignment():
-    run_alignment("simulated_data/references1.fasta", "simulated_data/query1.fasta")
-    
-alignment()
+run_alignment("experiment2", "_1")
