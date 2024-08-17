@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::vec;
 pub mod cli;
@@ -15,6 +16,19 @@ impl PartialEq for SeedObject {
     fn eq(&self, other: &Self) -> bool {
         self.identifier == other.identifier
     }
+} impl  Eq for SeedObject{}
+
+impl core::hash::Hash for SeedObject {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.identifier.hash(state);
+    }
+}
+
+pub struct Match<'a> {
+    pub ref_id: &'a str,
+    pub query_id: &'a str,
+    pub ref_idx: usize,
+    pub query_idx: usize
 }
 
 static SEQ_NT4_TABLE: [u8; 256] = {
@@ -77,7 +91,7 @@ pub fn seq_to_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<S
 Takes a u64 (a bit-representation of a seed) which we want to hash.
 The mask restricts the output hash to 0..= 2*k. I don't really know why.
  */
-fn hash64(item: &u64, mask: &u64) -> u64 {
+pub fn hash64(item: &u64, mask: &u64) -> u64 {
     let mut key = !item.saturating_add(item << 21) & mask; // key = (key << 21) - key - 1;
     key = key ^ key >> 24;
     key = key.saturating_add(key << 3) + (key << 8) & mask; // key * 265
@@ -88,7 +102,7 @@ fn hash64(item: &u64, mask: &u64) -> u64 {
     key
 }
 
-fn string_kmer_hashes(seq: &[u8], k: usize) -> HashMap<usize, u64> {
+pub fn string_kmer_hashes(seq: &[u8], k: usize) -> HashMap<usize, u64> {
     let mut hash_at_idx = HashMap::new();
 
     let mask = (1 << (2 * k)) - 1;
@@ -142,13 +156,14 @@ fn string_kmer_hashes(seq: &[u8], k: usize) -> HashMap<usize, u64> {
 /* HELPER FUNCTION FOR strobemer_euclidean_distance()
  * This function generates a string's set of strobemers.
  */
-pub fn seq_to_randstrobemers(
+pub fn seq_to_strobemers(
     seq: &[u8],
     order: usize,
     strobe_length: usize,
     w_min: usize,
     w_max: usize,
     ref_index: usize,
+    protocol: &str
 ) -> Result<Vec<SeedObject>> {
     let mut seed_vector: Vec<SeedObject> = Vec::new();
 
@@ -176,10 +191,15 @@ pub fn seq_to_randstrobemers(
                 }
             };
 
-            let (selected_strobe_index, selected_strobemer_hash) = strobe_selection_range
-                .map(|i| (i, lmer_hash_at_index.get(&i).unwrap() ^ current_strobemer_hash))
-                .min_by_key(|&(_, hash)| hash)
-                .unwrap();
+            let (selected_strobe_index, selected_strobemer_hash) = match protocol {
+                "rand" => select_randstrobe_index_and_hash(&lmer_hash_at_index, strobe_selection_range, current_strobemer_hash)?,
+                // Randstrobes are conditionally dependent on previous strobes' hashes. If we fix the previous
+                // strobes hashes, the conditional dependence disappears and it becomes equivalent to
+                // minstrobes.  
+                "min" => select_randstrobe_index_and_hash(&lmer_hash_at_index, strobe_selection_range, 0)?,
+                "hybrid" => unimplemented!(),
+                _ => panic!("Not a valid type of strobe")
+            };
             
             strobe_indices.push(selected_strobe_index);
             current_strobemer_hash = selected_strobemer_hash;
@@ -195,37 +215,73 @@ pub fn seq_to_randstrobemers(
     Ok(seed_vector)
 }
 
+pub fn select_randstrobe_index_and_hash(
+    lmer_hash_at_index: &HashMap<usize, u64>,
+    strobe_selection_range: std::ops::Range<usize>,
+    current_strobemer_hash: u64,
+) -> Result<(usize, u64)> {
 
-pub fn frequency_vectors<'a>(base_seed_bag: &'a Vec<SeedObject>, mod_seed_bag: &'a Vec<SeedObject>
-) -> (HashMap<&'a u64, f64>, HashMap<&'a u64, f64>) {
-    let mut base_seed_counts = HashMap::new();
-    let mut mod_seed_counts = HashMap::new();
-    for seed in base_seed_bag {
-        base_seed_counts.entry(&seed.identifier)
-            .and_modify(|count| *count += 1.0)
-            .or_insert(1.0);
-        mod_seed_counts.entry(&seed.identifier)
-            .or_insert(0.0);
-    }
-    for seed in mod_seed_bag {
-        mod_seed_counts.entry(&seed.identifier).and_modify(|count| *count += 1.0).or_insert(1.0);
-        base_seed_counts.entry(&seed.identifier).or_insert(0.0);
-    }
-    (base_seed_counts, mod_seed_counts)
+    let (next_strobe_index, next_strobe_hash) = strobe_selection_range
+        .map(|i| (i, lmer_hash_at_index.get(&i).unwrap() ^ current_strobemer_hash))
+        .min_by_key(|&(_, hash)| hash)
+        .unwrap();
+
+    Ok((next_strobe_index, next_strobe_hash))
 }
 
 pub fn jaccard_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
 ) -> Result<f64> {
-    let (base_item_counts, mod_item_counts) = frequency_vectors(base_seed_bag, mod_seed_bag);
 
+    let union = (base_seed_bag.len() + mod_seed_bag.len()) as f64;
     let mut intersection = 0.0;
-    let mut union = 0.0;
-    for (item, base_count) in base_item_counts.iter() {
-        let mod_count = mod_item_counts.get(item).unwrap();
-        union += base_count + mod_count;
-        intersection += base_count.min(*mod_count) * 2.0;
+    let mut base_hash_set = HashMap::new();
+
+    for base_seed in base_seed_bag {
+        base_hash_set.entry(base_seed)
+            .and_modify(|value| *value += 1)
+            .or_insert(1);
     }
+    for mod_seed in mod_seed_bag {
+        base_hash_set.entry(mod_seed).and_modify(|value| {
+            *value -= 1;
+            intersection += 2.0;
+        });
+    }
+
     Ok(intersection / union)
+}
+
+#[allow(warnings)]
+pub fn find_nams<'a>(
+    query_seed_bag: &Vec<SeedObject>,
+    ref_seed_bag: &Vec<SeedObject>,
+    seed_hashmap: &mut HashMap<u64, (usize, &SeedObject)>,
+    k: usize,
+    //acc_to_idx: WhatTheFuckIsThatName,
+    query_id: &str,
+    //ref_id_map: HashMap<&str, idk>,
+    filter_cutoff: usize,
+) -> Result<Vec<Match<'a>>> {
+    let mut hit_count_all = 0;
+    let mut hit_count_reduced = 0;
+    let mut total_seeds = 0;
+
+    let mut hits: HashMap<u64, Vec<Match>> = HashMap::new(); // ref_id: 
+    let mut nams = Vec::new();
+
+    for query_seed in query_seed_bag {
+        if let Entry::Occupied(mut mer) = seed_hashmap.entry(query_seed.identifier) {
+            let (count, offset) = mer.get();
+            if *count <= filter_cutoff {
+                //for j in offset..offset+count{ // what the fuck }
+
+                
+            }
+        }
+
+    }
+
+    Ok(nams)
 }
 
 
@@ -325,17 +381,18 @@ mod seq_to_strobemers_tests {
     use pretty_assertions::assert_eq;
     use anyhow::Result;
 
-    use crate::seq_to_randstrobemers;
+    use crate::seq_to_strobemers;
 
     #[test]
     fn test_seq_to_strobemers_basic() -> Result<()> {
-        let strobemer_identifiers: Vec<u64> = seq_to_randstrobemers(
+        let strobemer_identifiers: Vec<u64> = seq_to_strobemers(
             b"AAAAAA",
             2, // order
             2, // strobe len
             0, // window gap
             2, // window len
-            1
+            1,
+            &"rand"
         )?
             .iter().map(|seed_object| seed_object.identifier)
             .collect();
@@ -347,13 +404,14 @@ mod seq_to_strobemers_tests {
 
     #[test]
     fn test_seq_to_strobemers_order_3_basic() -> Result<()> {
-        let strobemer_identifiers: Vec<u64> = seq_to_randstrobemers(
+        let strobemer_identifiers: Vec<u64> = seq_to_strobemers(
             b"ACGTACGTCGTATATT",
             3, // order
             2, // strobe len
             0, // window gap
             2, // window len
-            1
+            1,
+            &"rand"
         )?
             .iter().map(|seed_object| seed_object.identifier)
             .collect();

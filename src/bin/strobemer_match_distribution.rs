@@ -76,10 +76,15 @@ fn run(args: StrobemerArgs) -> Result<()> {
             )?;
             let reference_time = reference_seed_start_time.elapsed().as_secs_f64();
 
-            let estimation = jaccard_similarity(&reference_seeds,&query_seeds,)?;
 
+            
             print_update(i);
 
+
+            let estimation: f64 = jaccard_similarity(
+                &reference_seeds,
+                &query_seeds,
+            )?;
             writeln!(csv_file, "{},{},{},{},{},{:?}",
                 reference_record.id(),
                 query_record.id(),

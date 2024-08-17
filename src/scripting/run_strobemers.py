@@ -28,10 +28,10 @@ def strobemer_experiment1():
     run_strobemer(
         protocol="rand",
         order=2,
-        strobe_length=15,
+        strobe_length=5,
         w_min=1, w_max=50,
         experiment_name="experiment1",
-        experiment_version=".1"
+        experiment_version=""
     )
 
 
@@ -40,7 +40,7 @@ def strobemer_experiment1_1():
         protocol="rand",
         order=2,
         strobe_length=10,
-        w_min=1, w_max=50,
+        w_min=1, w_max=15,
         experiment_name="experiment1",
         experiment_version="_1"
     )
@@ -55,6 +55,18 @@ def strobemer_experiment1_2():
         experiment_name="experiment1",
         experiment_version="_2"
     )
+
+def strobemer_experiment1_3():
+    run_strobemer(
+        protocol="min",
+        order=2,
+        strobe_length=5,
+        w_min=0, w_max=40,
+        experiment_name="experiment1",
+        experiment_version="_3"
+    )
+
+
 
 
 def strobemer_experiment2_1():
@@ -82,10 +94,31 @@ def strobemer_experiment2_3():
     run_strobemer(
         protocol="rand",
         order=2,
-        strobe_length=17,
+        strobe_length=15,
         w_min=0, w_max=30,
         experiment_name="experiment2",
         experiment_version="_3"
     )
 
-strobemer_experiment2_3()
+def strobemer_experiment2_4():
+    run_strobemer(
+        protocol="min",
+        order=2,
+        strobe_length=15,
+        w_min=0, w_max=30,
+        experiment_name="experiment2",
+        experiment_version="_4"
+    )
+
+
+def strobemer_experiment3_1():
+    run_strobemer(
+        protocol="rand",
+        order=2,
+        strobe_length=15,
+        w_min=0, w_max=30,
+        experiment_name="experiment3",
+        experiment_version="_1"
+    )
+
+strobemer_experiment1_1()

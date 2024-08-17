@@ -9,7 +9,6 @@ import seaborn as sns
 # and draws the points on a pre-existing plot.
 def plot_line(data):
     plt.scatter(x='edit_distance', y='estimation', data=data)
-    plt.legend(['(Alignment Score, Strobemers Score)'], loc='upper left')
     plt.grid(True)
 
 def plot_kmers():
@@ -24,16 +23,15 @@ def plot_strobemers(experiment_name):
     estimation_data["edit_distance"] = alignment_data["edit_distance"]
     plot_line(estimation_data)
 
-def plot(experiment_name, seed_kind):
+def plot(experiment_name, seed_name):
     fontdict = {'fontsize': 15}
-    plt.figure(figsize=(4, 4))
-    plt.title("Estimation vs. edit distance", fontdict=fontdict)
+    plt.figure(figsize=(6, 6))
+    plt.title(f"{seed_name} similarity vs. edit distance", fontdict=fontdict)
     plt.xlabel("True edit distance", fontdict=fontdict)
-    plt.ylabel("Log(Estimation method)", fontdict=fontdict)
+    plt.ylabel(f"Log-scaled jaccard-similarity of \n {seed_name} bags", fontdict=fontdict)
 
-    if seed_kind == "randstrobes":
-        plot_strobemers(experiment_name)
-#        plt.yscale('log')
+    plot_strobemers(experiment_name)
+    plt.yscale('log')
 
     plt.legend()
     plt.show()
@@ -47,14 +45,23 @@ def experiment1_1():
 def experiment1_2():
     plot("experiment1_2", "randstrobes")
 
+def experiment1_3():
+    plot("experiment1_3", "(2,15,0,30)-minstrobe")
+
 def experiment2_1():
-    plot("experiment2_1", "randstrobes")
+    plot("experiment2_1", "(2,15,0,30)-randstrobe")
 
 def experiment2_2():
     plot("experiment2_2", "randstrobes")
 
-
 def experiment2_3():
     plot("experiment2_3", "randstrobes")
 
-experiment2_3()
+def experiment2_4():
+    plot("experiment2_4", "randstrobes")
+
+
+def experiment3_1():
+    plot("experiment3_1", "randstrobes")
+
+experiment1_1()

@@ -11,4 +11,4 @@ def run_alignment(experiment_name, experiment_version):
     print(f"Executing: {command}")
     os.system(command)
 
-run_alignment("experiment2", "_1")
+run_alignment("experiment3", "_1")
