@@ -32,7 +32,7 @@ fn main() {
 }
 
 fn run(args: StrobemerArgs) -> Result<()> {
-    let mut csv_file = create_estimation_csv_with_headers(&args.common, &"strobemer-output.csv".to_string())?;
+    let mut csv_file = create_estimation_csv_with_headers(&args.common)?;
 
     let seed_name = format!("({}.{}.{}.{})-{}strobemers",
         &args.order,

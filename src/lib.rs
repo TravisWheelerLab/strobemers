@@ -250,14 +250,13 @@ pub fn jaccard_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<Se
 
     Ok(intersection / union)
 }
-
 #[allow(warnings)]
 pub fn find_nams<'a>(
     query_seed_bag: &Vec<SeedObject>,
     ref_seed_bag: &Vec<SeedObject>,
     seed_hashmap: &mut HashMap<u64, (usize, &SeedObject)>,
     k: usize,
-    //acc_to_idx: WhatTheFuckIsThatName,
+    //acc_to_idx: ,
     query_id: &str,
     //ref_id_map: HashMap<&str, idk>,
     filter_cutoff: usize,
@@ -271,9 +270,9 @@ pub fn find_nams<'a>(
 
     for query_seed in query_seed_bag {
         if let Entry::Occupied(mut mer) = seed_hashmap.entry(query_seed.identifier) {
-            let (count, offset) = mer.get();
+            let (count, offset) = mer.get(); // get extracts the values from OccupiedEntry
             if *count <= filter_cutoff {
-                //for j in offset..offset+count{ // what the fuck }
+                //for j in offset..offset+count{ }
 
                 
             }
@@ -282,7 +281,7 @@ pub fn find_nams<'a>(
     }
 
     Ok(nams)
-}
+} 
 
 
 /* Tests for string_kmer_hashes and hash64. */

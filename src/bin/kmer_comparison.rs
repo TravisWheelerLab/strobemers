@@ -25,7 +25,7 @@ fn main() {
 }
 
 fn run(args: KmerArgs) -> Result<()> {
-    let mut csv_file = create_estimation_csv_with_headers(&args.common, &"kmer-output.csv".to_string())?;
+    let mut csv_file = create_estimation_csv_with_headers(&args.common)?;
     let seed_name = format!("{}-mers", &args.k);
     let query_reader = create_query_reader(&args.common)?;
 

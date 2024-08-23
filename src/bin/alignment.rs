@@ -17,7 +17,7 @@ fn main() {
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: CommonArgs) -> Result<()> {
-    let mut csv_file = create_alignment_csv_with_headers(&args, &"alignment-output.csv".to_string())?;
+    let mut csv_file = create_alignment_csv_with_headers(&args)?;
     let seed_name = format!("alignment");
     let query_reader = create_query_reader(&args)?;
 
