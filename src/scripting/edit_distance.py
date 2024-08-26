@@ -1,8 +1,0 @@
-from editdistance import eval
-
-string1 = "AGCTGACTGACTAGCTGACCTAGCGTACGCTAGCTGACTAGCTAGCGTAGCTGACTGAC"
-string2 = "TGACTGACTAGCTGACCTAGCTGACTAGCGTACGCTAGCTGACTAGCGTAGCTGACTGA"
-e = eval(string1, string2)
-
-print(len(string1))
-print(e)

@@ -1,3 +1,5 @@
+// WARNING: this binary does not implement functionality for the run_alignment flag.
+
 use std::time::Instant;
 use std::io::Write;
 use anyhow::Result;
@@ -32,7 +34,7 @@ fn main() {
 }
 
 fn run(args: StrobemerArgs) -> Result<()> {
-    let mut csv_file = create_estimation_csv_with_headers(&args.common)?;
+    let mut csv_file = create_csv_with_estimation_headers(&args.common)?;
 
     let seed_name = format!("({}.{}.{}.{})-{}strobemers",
         &args.order,
