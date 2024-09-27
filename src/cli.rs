@@ -1,8 +1,6 @@
 use std::fs::File;
 use std::path::Path;
 use std::io::{BufReader, Write};
-use std::str::FromStr;
-use std::fmt;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -11,6 +9,10 @@ use bio::io::fasta::Reader;
 
 use crate::*;
 
+// --------------------------------------------------
+// Arguments.
+
+// Common arguments are positional arguments for input and output file names.
 #[derive(Debug, Parser)]
 #[command(about, author, version)]
 pub struct CommonArgs {
@@ -27,6 +29,9 @@ pub struct CommonArgs {
 pub struct KmerSpecificArgs {
     #[arg(short='k', value_name = "INT", help="Substring length")]
     pub k: usize,
+
+    #[arg(long="ref-index", value_name = "REF", help="w-max: window selection parameter", default_value_t=1)]
+    pub ref_index: usize,
 }
 
 #[derive(Debug, Parser)]
@@ -46,37 +51,8 @@ pub struct StrobemerSpecificArgs {
     pub ref_index: usize,
 }
 
-#[derive(Debug, Clone)]
-pub enum Protocol {
-    Rand,
-    Min,
-    Hybrid,
-}
-
-impl FromStr for Protocol {
-    type Err = String;
-
-    fn from_str(input: &str) -> Result<Protocol, Self::Err> {
-        match input {
-            "rand" => Ok(Protocol::Rand),
-            "min" => Ok(Protocol::Min),
-            "hybrid" => Ok(Protocol::Hybrid),
-            _ => Err(format!("Invalid protocol: {}", input)),
-        }
-    }
-}
-
-impl fmt::Display for Protocol {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let protocol_str = match self {
-            Protocol::Rand => "rand",
-            Protocol::Min => "min",
-            Protocol::Hybrid => "hybrid",
-        };
-        write!(f, "{}", protocol_str)
-    }
-}
-
+// --------------------------------------------------
+// Helper functions for run() -- mostly code deduplication.
 
 pub fn create_reader(file_path_from_manifest: &str) -> Result<Reader<BufReader<File>>>{
     let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
@@ -86,12 +62,7 @@ pub fn create_reader(file_path_from_manifest: &str) -> Result<Reader<BufReader<F
     Ok(query_reader)
 }
 
-pub fn print_update(i: usize) {
-    print!("\r comparisons done: {:?}", i);
-    std::io::stdout().flush().unwrap();
-}
-
-pub fn run<T: SeedTrait>(args: &CommonArgs, seed_specific_args: &T) -> Result<Vec<String>> {
+pub fn run<T: SeedTraits>(args: &CommonArgs, seed_specific_args: &T) -> Result<Vec<String>> {
     let mut results_to_save = Vec::new();
 
     let query_reader = create_reader(&args.query_file)?;
@@ -111,7 +82,9 @@ pub fn run<T: SeedTrait>(args: &CommonArgs, seed_specific_args: &T) -> Result<Ve
             let ref_seeds = seed_specific_args.generate_seeds(reference_record.seq())?;
             let reference_time = reference_time.elapsed().as_secs_f64();
             let estimation = jaccard_similarity(&ref_seeds,&query_seeds)?;
-            print_update(i);
+
+            print!("\r comparisons done: {:?}", i);
+            std::io::stdout().flush().unwrap();
             i += 1;
 
             let result = format!("{},{},{}",
@@ -125,21 +98,25 @@ pub fn run<T: SeedTrait>(args: &CommonArgs, seed_specific_args: &T) -> Result<Ve
     Ok(results_to_save)
 }
 
-pub trait SeedTrait {
+// --------------------------------------------------
+// SeedTraits allows run() to work with arbitrary [seed]SpecificArgs.
+// All you need to do is define how generate_seeds works for that kind of seed.
+// There is also a repr() function which helps with more code deduplication.
+pub trait SeedTraits {
     fn generate_seeds(&self, seq: &[u8]) -> Result<Vec<SeedObject>>;
     fn repr(&self) -> String;
 }
 
-impl SeedTrait for KmerSpecificArgs {
+impl SeedTraits for KmerSpecificArgs {
     fn generate_seeds(&self, seq: &[u8]) -> Result<Vec<SeedObject>>{
-        seq_to_kmers(seq, &self, 1)
+        seq_to_kmers(seq, &self)
     }
     fn repr(&self) -> String {
         format!("{}-mers", {self.k})
     }
 }
 
-impl SeedTrait for StrobemerSpecificArgs {
+impl SeedTraits for StrobemerSpecificArgs {
     fn generate_seeds(&self, seq: &[u8]) -> Result<Vec<SeedObject>>{
         seq_to_strobemers(seq, &self)
     }
@@ -154,6 +131,10 @@ impl SeedTrait for StrobemerSpecificArgs {
     }
 }
 
+// --------------------------------------------------
+// More deduplication -- SaveToCVS makes it super easy to save results.
+// You need a results_to_save object and seed_name though. results_to_save is just a Vec<String>
+// containing "{estimation},{query_time},{ref_time}" lines. This trait takes care of the rest.
 pub trait SaveToCSV {
     fn save_results_to_csv(&self, seed_name: &String, results_to_save: &Vec<String>) -> Result<()>;
 }
