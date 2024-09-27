@@ -40,5 +40,5 @@ name = "kmer_comparison"
 path = "src/bin/kmer_comparison.rs"
 
 [[bin]]
-name = "strobemer_match_distribution"
-path = "src/bin/strobemer_match_distribution.rs"
+name = "strobemer_NAMS"
+path = "src/bin/strobemer_NAMS.rs"

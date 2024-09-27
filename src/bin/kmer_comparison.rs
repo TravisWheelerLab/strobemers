@@ -1,8 +1,4 @@
-// WARNING: this binary does not implement functionality for the run_alignment flag.
-
 use std::time::Instant;
-use std::io::Write;
-use alignment_free_methods::cli::create_query_reader;
 use anyhow::Result;
 use clap::Parser;
 
@@ -27,12 +23,12 @@ fn main() {
 }
 
 fn run(args: KmerArgs) -> Result<()> {
-    let mut csv_file = create_csv_with_estimation_headers(&args.common)?;
     let seed_name = format!("{}-mers", &args.k);
-    let query_reader = create_query_reader(&args.common)?;
+    let query_reader = create_reader(&args.common.query_file)?;
 
     let mut i = 0;
     for query_record in query_reader.records() {
+        // There should only be 1!
         let query_record = query_record?;
         let query_seed_start_time = Instant::now();
         let query_seeds = alignment_free_methods::seq_to_kmers(
@@ -42,7 +38,7 @@ fn run(args: KmerArgs) -> Result<()> {
         )?;
         let query_time = query_seed_start_time.elapsed().as_secs_f64();
 
-        let reference_reader = create_reference_reader(&args.common)?;
+        let reference_reader = create_reader(&args.common.references_file)?;
         for reference_record in reference_reader.records() {
             i += 1;
             let reference_record = reference_record?;
@@ -53,19 +49,10 @@ fn run(args: KmerArgs) -> Result<()> {
                 args.k.clone(),
                 1
             )?;
+
             let reference_time = reference_seed_start_time.elapsed().as_secs_f64();
-
             let estimation = jaccard_similarity(&reference_seeds,&query_seeds,)?;
-
             print_update(i);
-            writeln!(csv_file, "{},{},{},{},{},{:?}",
-                reference_record.id(),
-                query_record.id(),
-                seed_name,
-                estimation,
-                reference_time,
-                query_time
-            )?;
         }
     }
     Ok(())

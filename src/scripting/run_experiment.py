@@ -1,5 +1,6 @@
 import pathlib
 import os
+import shutil
 import statistics
 import random
 import matplotlib.pyplot as plt
@@ -55,7 +56,7 @@ def run_strobemer(
     strobe_length,
     w_min,
     w_max,
-    experiment_name
+    experiment_name,
 ):
     query_files, references_files = fasta_file_lists(experiment_name)
     for i, (q, r) in enumerate(zip(sorted(query_files), sorted(references_files))):
@@ -69,7 +70,7 @@ def run_strobemer(
             f"--w-min {w_min} "
             f"--w-max {w_max} "
             f"-e {experiment_name} "
-            f"--identifier {i} "
+            f"--run-alignment "
         )
         print(f"Executing: {command}")
         os.system(command)
@@ -81,16 +82,11 @@ def plot(experiment_name):
     fontdict = {'fontsize': 15}
     plt.figure(figsize=(6, 6))
 
-    query_files = glob.glob(os.path.join(relative_path_to_script, "query*.fasta"))
-    reference_files = glob.glob(os.path.join(relative_path_to_script, "references*.fasta"))
-    for query, reference in zip(sorted(query_files), sorted(reference_files)):
+    data_files = glob.glob(os.path.join(relative_path_to_script, "output*.csv"))
+    for data_file in data_files:
         data = pd.read_csv(
-            os.path.join(relative_path_to_script, os.path.basename())
+            os.path.join(relative_path_to_script, os.path.basename(data_file))
         )
-        alignment_data = pd.read_csv(
-            os.path.join(relative_path_to_script, os.path.basename(al))
-        )
-        data["edit_distance"] = alignment_data["edit_distance"]
         seed_name = data.at[0, "seed_name"]
         plt.scatter(x='edit_distance', y='estimation', data=data)
 
@@ -127,10 +123,14 @@ def experiment1():
 def experiment2():
     experiment_name = "experiment2"
     query, references = fasta_file_paths(experiment_name)
+    shutil.rmtree(os.path.dirname(query))
     os.mkdir(os.path.dirname(query))
 
-    simulate_data.create_correlated_data(experiment_name, 2, 1000, range(0, 500, 10))
+    n_pairs = 10
+    simulate_data.create_correlated_data(experiment_name, n_pairs, 1000, range(0, 500, 10))
 
+    relative_path_to_script = tools.experiment_dir(experiment_name)
+    string_pairs = glob.glob(os.path.join(relative_path_to_script, "query*.fasta"))
     run_strobemer(
         protocol="rand",
         order=2,

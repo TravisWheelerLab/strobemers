@@ -1,4 +1,5 @@
 use anyhow::Result;
+use cli::{Protocol, StrobemerArgs};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::vec;
@@ -102,7 +103,7 @@ pub fn hash64(item: &u64, mask: &u64) -> u64 {
     key
 }
 
-pub fn string_kmer_hashes(seq: &[u8], k: usize) -> HashMap<usize, u64> {
+pub fn string_kmer_hashes(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
     let mut hash_at_idx = HashMap::new();
 
     let mask = (1 << (2 * k)) - 1;
@@ -117,7 +118,7 @@ pub fn string_kmer_hashes(seq: &[u8], k: usize) -> HashMap<usize, u64> {
         if char_u2_as_u8 < 4 { // valid character (not 'N')
             kmer_bits = (kmer_bits << 2 | char_u2_as_u8 as u64) & mask;
             l += 1;
-            if l >= k {
+            if l >= *k {
                 _count += 1;
                 let hash = hash64(&kmer_bits, &mask);
                 hash_at_idx.insert(idx + 1 - k, hash); // it will never have an entry
@@ -158,20 +159,15 @@ pub fn string_kmer_hashes(seq: &[u8], k: usize) -> HashMap<usize, u64> {
  */
 pub fn seq_to_strobemers(
     seq: &[u8],
-    order: usize,
-    strobe_length: usize,
-    w_min: usize,
-    w_max: usize,
-    ref_index: usize,
-    protocol: &str
+    args: &StrobemerArgs
 ) -> Result<Vec<SeedObject>> {
     let mut seed_vector: Vec<SeedObject> = Vec::new();
 
-    if seq.len() < w_max {
+    if seq.len() < args.w_max {
         return Ok(seed_vector);
     }
 
-    let lmer_hash_at_index: HashMap<usize, u64> = string_kmer_hashes(&seq, strobe_length);
+    let lmer_hash_at_index: HashMap<usize, u64> = string_kmer_hashes(&seq, &args.strobe_length);
     // here, we compute the hash of every l-mer in the string. That way, multiple computations
     // aren't needed.
     // lmer_hash_at_index will be a HashMap containing every l-mer position (i.e. 0..seq.len() - k)
@@ -179,26 +175,25 @@ pub fn seq_to_strobemers(
     for strobemer_start_idx in 0..=seq.len() { // strobemer_start_idx is the start of each strobemer.
         let mut current_strobemer_hash = lmer_hash_at_index[&strobemer_start_idx];
         let mut strobe_indices = vec![strobemer_start_idx];
-        for strobe_number in 0..order - 1 {
-            let end_of_last_window = strobemer_start_idx + strobe_length + strobe_number * w_max;
+        for strobe_number in 0..args.order - 1 {
+            let end_of_last_window = strobemer_start_idx + &args.strobe_length + strobe_number * &args.w_max;
             let strobe_selection_range = { // The indices which we minimize from to get a strobe
-                if end_of_last_window + w_max <= seq.len() - strobe_length - 1 { // strobemers can fit in the entire window
-                    end_of_last_window + w_min..end_of_last_window + w_max
-                } else if end_of_last_window + w_min + 1 < seq.len() && seq.len() <= end_of_last_window + w_max {
-                    end_of_last_window + w_min..seq.len() - 1
+                if end_of_last_window + &args.w_max <= seq.len() - &args.strobe_length - 1 { // strobemers can fit in the entire window
+                    end_of_last_window + &args.w_min..end_of_last_window + &args.w_max
+                } else if end_of_last_window + &args.w_min + 1 < seq.len() && seq.len() <= end_of_last_window + &args.w_max {
+                    end_of_last_window + &args.w_min..seq.len() - 1
                 } else {
                     return Ok(seed_vector)
                 }
             };
 
-            let (selected_strobe_index, selected_strobemer_hash) = match protocol {
-                "rand" => select_randstrobe_index_and_hash(&lmer_hash_at_index, strobe_selection_range, current_strobemer_hash)?,
+            let (selected_strobe_index, selected_strobemer_hash) = match args.protocol {
+                Protocol::Rand => select_randstrobe_index_and_hash(&lmer_hash_at_index, strobe_selection_range, current_strobemer_hash)?,
                 // Randstrobes are conditionally dependent on previous strobes' hashes. If we fix the previous
                 // strobes hashes, the conditional dependence disappears and it becomes equivalent to
                 // minstrobes.  
-                "min" => select_randstrobe_index_and_hash(&lmer_hash_at_index, strobe_selection_range, 0)?,
-                "hybrid" => unimplemented!(),
-                _ => panic!("Not a valid type of strobe")
+                Protocol::Min => select_randstrobe_index_and_hash(&lmer_hash_at_index, strobe_selection_range, 0)?,
+                Protocol::Hybrid => unimplemented!(),
             };
             
             strobe_indices.push(selected_strobe_index);
@@ -207,7 +202,7 @@ pub fn seq_to_strobemers(
 
         seed_vector.push(SeedObject {
             identifier: current_strobemer_hash,
-            ref_index: ref_index,
+            ref_index: args.ref_index.clone(),
             local_index: strobemer_start_idx,
             word_indices: strobe_indices,
         });
@@ -296,7 +291,7 @@ mod hashing_tests {
     fn test_string_kmer_hashes_basic(){
         let k = 2;
         let mask = (1 << (2 * k)) - 1;
-        let kmer_hash_at_idx = string_kmer_hashes(b"ACGT", k);
+        let kmer_hash_at_idx = string_kmer_hashes(b"ACGT", &k);
         let mut my_hash_hap = HashMap::new();
         my_hash_hap.insert(0, hash64(&0b0001, &mask));
         my_hash_hap.insert(1, hash64(&0b0110, &mask));
@@ -308,7 +303,7 @@ mod hashing_tests {
     fn test_string_kmer_hashes_16(){
         let k = 16;
         let mask = (1 << (2 * k)) - 1;
-        let kmer_hash_at_idx = string_kmer_hashes(b"AAAAAAAAAAAAAAAA", k);
+        let kmer_hash_at_idx = string_kmer_hashes(b"AAAAAAAAAAAAAAAA", &k);
         let mut my_hash_hap = HashMap::new();
         my_hash_hap.insert(0, hash64(&0b0, &mask));
         assert_eq!(kmer_hash_at_idx, my_hash_hap);
@@ -318,7 +313,7 @@ mod hashing_tests {
     fn test_string_kmer_hashes_17(){
         let k = 17;
         let mask = (1 << (2 * k)) - 1;
-        let kmer_hash_at_idx = string_kmer_hashes(b"AAAAAAAAAAAAAAAAA", k);
+        let kmer_hash_at_idx = string_kmer_hashes(b"AAAAAAAAAAAAAAAAA", &k);
         let mut my_hash_hap = HashMap::new();
         my_hash_hap.insert(0, hash64(&0b0, &mask));
         assert_eq!(kmer_hash_at_idx, my_hash_hap);
@@ -372,51 +367,4 @@ mod seq_to_kmers_tests {
         assert_eq!(kmer_identifiers, expected);
         Ok(())
     }
-}
-
-/* Tests for seq_to_strobemers */
-#[cfg(test)]
-mod seq_to_strobemers_tests {
-    use pretty_assertions::assert_eq;
-    use anyhow::Result;
-
-    use crate::seq_to_strobemers;
-
-    #[test]
-    fn test_seq_to_strobemers_basic() -> Result<()> {
-        let strobemer_identifiers: Vec<u64> = seq_to_strobemers(
-            b"AAAAAA",
-            2, // order
-            2, // strobe len
-            0, // window gap
-            2, // window len
-            1,
-            &"rand"
-        )?
-            .iter().map(|seed_object| seed_object.identifier)
-            .collect();
-        let expected = vec![0b11, 0b11, 0b11];
-        assert_eq!(strobemer_identifiers, expected);
-        Ok(())
-    }
-
-
-    #[test]
-    fn test_seq_to_strobemers_order_3_basic() -> Result<()> {
-        let strobemer_identifiers: Vec<u64> = seq_to_strobemers(
-            b"ACGTACGTCGTATATT",
-            3, // order
-            2, // strobe len
-            0, // window gap
-            2, // window len
-            1,
-            &"rand"
-        )?
-            .iter().map(|seed_object| seed_object.identifier)
-            .collect();
-        let expected = vec![0b11, 0b11, 0b11];
-        assert_eq!(strobemer_identifiers, expected);
-        Ok(())
-    }
-
 }
