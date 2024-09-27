@@ -7,6 +7,7 @@ use alignment_free_methods::cli::*;
 
 // --------------------------------------------------
 fn main() {
+    let seed_name = format!("alignment");
     if let Err(e) = run(CommonArgs::parse()) {
         eprintln!("{e}");
         std::process::exit(1);
@@ -16,7 +17,6 @@ fn main() {
 // --------------------------------------------------
 // See this repo's README file for pseudocode
 fn run(args: CommonArgs) -> Result<()> {
-    let seed_name = format!("alignment");
     let query_reader = create_reader(&args.query_file)?;
 
     let mut i = 0;

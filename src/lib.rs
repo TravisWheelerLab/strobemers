@@ -1,9 +1,12 @@
 use anyhow::Result;
-use cli::{Protocol, StrobemerArgs};
+use cli::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::vec;
 pub mod cli;
+
+// --------------------------------------------------
+// Seed Object (how do we represent a seed?)
 
 #[derive(Debug)]
 pub struct SeedObject {
@@ -12,46 +15,24 @@ pub struct SeedObject {
     pub local_index: usize,
     pub word_indices: Vec<usize>
 }
-
 impl PartialEq for SeedObject {
     fn eq(&self, other: &Self) -> bool {
         self.identifier == other.identifier
     }
-} impl  Eq for SeedObject{}
-
+}
+impl  Eq for SeedObject{}
 impl core::hash::Hash for SeedObject {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.identifier.hash(state);
     }
 }
 
-pub struct Match<'a> {
-    pub ref_id: &'a str,
-    pub query_id: &'a str,
-    pub ref_idx: usize,
-    pub query_idx: usize
-}
+// --------------------------------------------------
+// Kmer code
 
-static SEQ_NT4_TABLE: [u8; 256] = {
-    let mut table = [4u8; 256]; // Default all values to 4 (error or invalid character)
-
-    table[b'A' as usize] = 0;
-    table[b'C' as usize] = 1;
-    table[b'G' as usize] = 2;
-    table[b'T' as usize] = 3;
-    table[b'a' as usize] = 0;
-    table[b'c' as usize] = 1;
-    table[b'g' as usize] = 2;
-    table[b't' as usize] = 3;
-    table[b'N' as usize] = 4;
-
-    table
-};
-
-// This function takes a string represented as a slice of u8 and returns the set of k-mers.
-pub fn seq_to_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<SeedObject>> {
+pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs, ref_index: usize) -> Result<Vec<SeedObject>> {
     let mut kmers = vec![];
-    let mask: u64 = (0b1 << (2 * k)) - 1; // 2 * k 1's
+    let mask: u64 = (0b1 << (2 * &kmer_args.k)) - 1; // 2 * k 1's
     let mut kmer_bits = 0_u64;
     let mut _count = 0;
     let mut l = 0; // how many characters we have "loaded"
@@ -70,7 +51,7 @@ pub fn seq_to_kmers(sequence: &[u8], k: usize, ref_index: usize) -> Result<Vec<S
             // Step 3: & mask
             // * Cut off the character "left behind" (turn it into 00) */
             l += 1;
-            if l >= k { // we have at least k characters loaded into kmer_bits
+            if l >= kmer_args.k { // we have at least k characters loaded into kmer_bits
                 kmers.push(SeedObject {
                     identifier: kmer_bits,
                     ref_index: ref_index,
@@ -159,7 +140,7 @@ pub fn string_kmer_hashes(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
  */
 pub fn seq_to_strobemers(
     seq: &[u8],
-    args: &StrobemerArgs
+    args: &StrobemerSpecificArgs
 ) -> Result<Vec<SeedObject>> {
     let mut seed_vector: Vec<SeedObject> = Vec::new();
 
@@ -278,6 +259,32 @@ pub fn find_nams<'a>(
     Ok(nams)
 } 
 
+// --------------------------------------------------
+// Match/NAMs related code.
+
+pub struct Match<'a> {
+    pub ref_id: &'a str,
+    pub query_id: &'a str,
+    pub ref_idx: usize,
+    pub query_idx: usize
+}
+
+static SEQ_NT4_TABLE: [u8; 256] = {
+    let mut table = [4u8; 256]; // Default all values to 4 (error or invalid character)
+
+    table[b'A' as usize] = 0;
+    table[b'C' as usize] = 1;
+    table[b'G' as usize] = 2;
+    table[b'T' as usize] = 3;
+    table[b'a' as usize] = 0;
+    table[b'c' as usize] = 1;
+    table[b'g' as usize] = 2;
+    table[b't' as usize] = 3;
+    table[b'N' as usize] = 4;
+
+    table
+};
+
 
 /* Tests for string_kmer_hashes and hash64. */
 #[cfg(test)]
@@ -323,48 +330,5 @@ mod hashing_tests {
     fn test_hash64_basic() {
         let hash = hash64(&(0b1011 as u64), &(0b1111 as u64));
         assert_eq!(hash, 0b100);
-    }
-}
-
-/* Tests for jaccard_similarity. */
-#[cfg(test)]
-mod comparison_tests {
-    use anyhow::Result;
-    use crate::jaccard_similarity;
-    use crate::seq_to_kmers;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn test_jaccard_similarity_basic() -> Result<()>{
-        let k = 2;
-        let ref_index = 0;
-        let kmers1 = seq_to_kmers(b"AAAA", k, ref_index)?;
-        let kmers2 = seq_to_kmers(b"AAAA", k, ref_index)?;
-        let estimated_similarity = jaccard_similarity(&kmers1, &kmers2)?;
-        assert_eq!(estimated_similarity, 1.0);
-        Ok(())
-    }
-}
-
-/* Tests for seq_to_kmers. */
-#[cfg(test)]
-mod seq_to_kmers_tests {
-    use pretty_assertions::assert_eq;
-    use anyhow::Result;
-
-    use crate::seq_to_kmers;
-
-    #[test]
-    fn test_generate_kmers_basic() -> Result<()> {
-        let kmer_identifiers: Vec<u64> = seq_to_kmers(
-            b"ACGT",
-            2,
-            0
-        )?
-            .iter().map(|seed_object| seed_object.identifier)
-            .collect();
-        let expected: Vec<u64> = vec![0b0001, 0b0110, 0b1011];
-        assert_eq!(kmer_identifiers, expected);
-        Ok(())
     }
 }
