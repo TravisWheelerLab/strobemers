@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cli::*;
+use rand::seq;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::vec;
@@ -12,10 +13,10 @@ pub mod cli;
 
 #[derive(Debug)]
 pub struct SeedObject {
-    pub identifier: u64,
+    pub identifier: u64, // seed representation, such as a hash
     pub ref_index: usize, // I have no idea what this is, it's just stored here for reference.
-    pub local_index: usize,
-    pub word_indices: Vec<usize>
+    pub local_index: usize, // index in the sequence it's from
+    pub word_indices: Vec<usize> // if non-contiguous, the start positions of its sub-strings.
 }
 impl PartialEq for SeedObject {
     fn eq(&self, other: &Self) -> bool {
@@ -32,45 +33,120 @@ impl core::hash::Hash for SeedObject {
 // --------------------------------------------------
 // Kmer code
 
+// return u2-encoded nt
+// it has to be a u8 because u2 type doesn't exist
+pub fn nt_encoded_as_u2(nt_utf8: &u8) -> u8 {
+    SEQ_NT4_TABLE[*nt_utf8 as usize]
+}
+
+pub fn pack_nt_onto_kmer(kmer_bits: &mut u64, nt: u8, mask: &u64) {
+    *kmer_bits <<= 2; // make room for a new nt with bit-shift-left.
+    *kmer_bits |= nt as u64; // turn the first 2 bits into the nt using bitwise OR
+    *kmer_bits &= mask; // erase bits over the length of k with bitwise AND
+}
+
 // This turns a sequence of DNA (represented by a u8 slice) into kmers.
 pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs) -> Result<Vec<SeedObject>> {
-    let mut kmers = vec![];
-    let mask: u64 = (0b1 << (2 * &kmer_args.k)) - 1; // 2 * k 1's
-    let mut kmer_bits = 0_u64;
-    let mut _count = 0;
-    let mut l = 0; // how many characters we have "loaded"
+    if (kmer_args.k == 0) | (sequence.len() < kmer_args.k) {
+        return Ok(Vec::<SeedObject>::new());
+    }
 
-    for i in 0..=sequence.len()-1 {
-        let char_utf8 = sequence.get(i).unwrap(); // this is utf-8 encoded (e.g. 0b65 is 'A')
-        let char_u2_as_u8 = SEQ_NT4_TABLE[*char_utf8 as usize];
-        if char_u2_as_u8 < 4 { // Valid nucleotide (not "N", which I have no idea what N is anyway)
-            kmer_bits = (kmer_bits.wrapping_shl(2) | char_u2_as_u8 as u64) & mask;
-            /* Step 1: kmer_bits.wrapping_shl(2)
-            // * shift character-encoding bits 1 character (2 bits) up the u64 kmer representation
-            // Step 2: | *i_char as u64
-            // * Note: the 2 bits that wrap around will always be zero (see step 3)
-            // * i_char is really just a u2. Remember that the first two bits are zero.
-            // * Thus, the bitwise-OR copies the i_char information to the first two bits of the u64!
-            // Step 3: & mask
-            // * Cut off the character "left behind" (turn it into 00) */
-            l += 1;
-            if l >= kmer_args.k { // we have at least k characters loaded into kmer_bits
+    let mask: u64 = (0b1 << (2 * kmer_args.k)) - 1; // 1 repeated 2*k times
+    let mut kmers = vec![];
+    let mut kmer_bits = 0_u64;
+    let mut l = 0; // how many characters we have "loaded" (must be >= k to be a valid kmer)
+
+    for i in 0..sequence.len() { // i is the beginning of a k-mer
+        let nt_utf8 = sequence.get(i).unwrap(); // i will never exceed seq.len()
+        let nt = nt_encoded_as_u2(&nt_utf8);
+        if nt >= 4 {l = 0;kmer_bits = 0;} else { // restart if nt == 'N'. Idk why, its from sahlin.
+            pack_nt_onto_kmer(&mut kmer_bits, nt, &mask);
+            if {l += 1; l >= kmer_args.k} { // kmer_bits represents a kmer!
                 kmers.push(SeedObject {
-                    identifier: kmer_bits,
+                    identifier: kmer_bits.clone(),
                     ref_index: kmer_args.ref_index.clone(),
-                    local_index: i,
+                    local_index: i + 1 - kmer_args.k,
                     word_indices: vec![],
                 });
-                _count += 1;
             }
-        }
-        else { // if there is an "N", restart
-            l = 0;
-            kmer_bits = 0; 
         }
     }
     Ok(kmers)
 }
+
+// --------------------------------------------------
+// Tests for kmer methods
+#[cfg(test)]
+mod kmer_tests {
+    use anyhow::Result;
+    use crate::{nt_encoded_as_u2, pack_nt_onto_kmer, seq_to_kmers, KmerSpecificArgs, SeedObject};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_nt_encoded_as_u2() {
+        let seq = b"ACGTNx";
+        assert_eq!(0u8 as u8, nt_encoded_as_u2(&seq[0]));
+        assert_eq!(1u8 as u8, nt_encoded_as_u2(&seq[1]));
+        assert_eq!(2u8 as u8, nt_encoded_as_u2(&seq[2]));
+        assert_eq!(3u8 as u8, nt_encoded_as_u2(&seq[3]));
+        assert_eq!(4u8 as u8, nt_encoded_as_u2(&seq[4]));
+        assert_eq!(5u8 as u8, nt_encoded_as_u2(&seq[5]));
+    }
+
+    #[test]
+    fn test_pack_nt_onto_kmer() {
+        let mut kmer_bits = 0b0001; // AC
+        pack_nt_onto_kmer(&mut kmer_bits, 0b10, &0b1111);
+
+        let true_kmer_bits = 0b0110;
+        assert_eq!(true_kmer_bits, kmer_bits);
+    }
+    
+    #[test]
+    fn test_seq_to_kmers_demonstration() -> Result<()>{
+        let kmers_returned =seq_to_kmers(
+            b"ACTG", 
+            &KmerSpecificArgs{k:3, ref_index:0}
+        )?;
+        let mut kmers_real = Vec::new();
+        kmers_real.push(SeedObject{
+            identifier: 0b000111,
+            ref_index: 0,
+            local_index: 0,
+            word_indices: vec![]
+        });
+        kmers_real.push(SeedObject{
+            identifier: 0b011110,
+            ref_index: 0,
+            local_index: 1,
+            word_indices: vec![]
+        });
+        assert_eq!(kmers_real, kmers_returned);
+        Ok(())
+    }
+
+    #[test]
+    fn test_seq_to_kmers_k0() -> Result<()>{
+        let kmers_returned =seq_to_kmers(
+            b"ACTG", 
+            &KmerSpecificArgs{k:0, ref_index:0}
+        )?;
+        assert_eq!(Vec::<SeedObject>::new(), kmers_returned);
+        Ok(())
+    }
+
+    #[test]
+    fn test_seq_to_kmers_k_greater_than_sequence_length() -> Result<()>{
+        let kmers_returned =seq_to_kmers(
+            b"ACTG", 
+            &KmerSpecificArgs{k:5, ref_index:0}
+        )?;
+        assert_eq!(Vec::<SeedObject>::new(), kmers_returned);
+        Ok(())
+    }
+}
+
+
 
 // --------------------------------------------------
 // Hashing code -- used for fast index-to-kmer lookups in strobemers
@@ -91,21 +167,16 @@ pub fn hash64(item: &u64, mask: &u64) -> u64 {
 // Lookup by index in the sequence
 pub fn kmer_hash_table(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
     let mut hash_at_idx = HashMap::new();
-
-    let mask = (1 << (2 * k)) - 1;
+    let mask: u64 = (0b1 << (2 * k)) - 1; // 1 repeated 2*k times
     let mut kmer_bits = 0_u64;
     
-    let mut _count = 0;
     let mut l = 0;
-    for idx in 0..seq.len() {
-        let char_utf8 = seq.get(idx).unwrap();
-        let char_u2_as_u8 = SEQ_NT4_TABLE[*char_utf8 as usize];
-
-        if char_u2_as_u8 < 4 { // valid character (not 'N')
-            kmer_bits = (kmer_bits << 2 | char_u2_as_u8 as u64) & mask;
-            l += 1;
-            if l >= *k {
-                _count += 1;
+    for idx in 0..seq.len() { // idx never greater than seq.len()!
+        let nt_utf8 = seq.get(idx).unwrap();
+        let nt = nt_encoded_as_u2(nt_utf8);
+        if nt < 4 { // valid character (not 'N')
+            pack_nt_onto_kmer(&mut kmer_bits, nt, &mask);
+            if {l += 1; l >= *k} {
                 let hash = hash64(&kmer_bits, &mask);
                 hash_at_idx.insert(idx + 1 - k, hash); // it will never have an entry
             }
@@ -315,7 +386,7 @@ pub struct Match<'a> {
 }
 
 static SEQ_NT4_TABLE: [u8; 256] = {
-    let mut table = [4u8; 256]; // Default all values to 4 (error or invalid character)
+    let mut table = [5u8; 256]; // Default all values to 5 (error or invalid character)
 
     table[b'A' as usize] = 0;
     table[b'C' as usize] = 1;
@@ -325,6 +396,7 @@ static SEQ_NT4_TABLE: [u8; 256] = {
     table[b'c' as usize] = 1;
     table[b'g' as usize] = 2;
     table[b't' as usize] = 3;
+
     table[b'N' as usize] = 4;
 
     table
