@@ -32,13 +32,5 @@ name = "strobemer_comparison"
 path = "src/bin/strobemer_comparison.rs"
 
 [[bin]]
-name = "alignment"
-path = "src/bin/alignment.rs"
-
-[[bin]]
 name = "kmer_comparison"
 path = "src/bin/kmer_comparison.rs"
-
-[[bin]]
-name = "strobemer_NAMS"
-path = "src/bin/strobemer_NAMS.rs"
