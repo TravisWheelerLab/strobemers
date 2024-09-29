@@ -69,20 +69,20 @@ pub fn nt_encoded_as_u2(nt_utf8: &u8) -> u8 {
 // modifies kmer_bits in place.
 // Shift the bit-string 2 bits to the left, slap on the 2-bit encoded nucleotide,
 // and cut off the extra 2 bits
-pub fn pack_nt_onto_kmer(kmer_bits: &mut u64, nt: u8, mask: &u64) {
-    *kmer_bits <<= 2; // make room for a new nt with bit-shift-left.
-    *kmer_bits |= nt as u64; // turn the first 2 bits into the nt using bitwise OR
+pub fn pack_nt_onto_kmer(kmer_bits: &mut u64, nucleotide: u8, mask: &u64) {
+    *kmer_bits = kmer_bits.wrapping_shl(2); // make room for a new nt with bit-shift-left.
+    *kmer_bits |= nucleotide as u64; // turn the first 2 bits into the nt using bitwise OR
     *kmer_bits &= mask; // erase bits over the length of k with bitwise AND
 }
 
 // Turn a sequence of DNA (u8 slice of utf-8 encoded nucleotides) into kmers.
 pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs) -> Result<Vec<SeedObject>> {
+    let mut kmers = vec![];
     if (kmer_args.k == 0) | (sequence.len() < kmer_args.k) {
-        return Ok(Vec::<SeedObject>::new());
+        return Ok(kmers);
     }
 
     let mask: u64 = (0b1 << (2 * kmer_args.k)) - 1; // 1 repeated 2*k times
-    let mut kmers = vec![];
     let mut kmer_bits = 0_u64;
     let mut l = 0; // how many characters we have "loaded" (must be >= k to be a valid kmer)
 
@@ -191,13 +191,13 @@ pub fn hash64(u2encoded_seed: &u64, mask: &u64) -> u64 {
     let mut key = u2encoded_seed.clone();
     key = (!key).wrapping_add(key.wrapping_shl(21));
     key &= mask;
-    key = key ^ key.wrapping_shr(24);
+    key ^= key.wrapping_shr(24);
     key = key.wrapping_add(key.wrapping_shl(3)).wrapping_add(key.wrapping_shl(8));
     key &= mask;
-    key = key ^ key.wrapping_shr(14);
+    key ^= key.wrapping_shr(14);
     key = key.wrapping_add(key.wrapping_shl(2)).wrapping_add(key.wrapping_shl(4));
     key &= mask;
-    key = key ^ key.wrapping_shr(28);
+    key ^= key.wrapping_shr(28);
     key = key.wrapping_add(key.wrapping_shl(31));
     key &= mask;
     key
