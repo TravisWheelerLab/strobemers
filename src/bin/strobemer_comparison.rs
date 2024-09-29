@@ -17,7 +17,7 @@ pub struct StrobemerArgs {
 
 fn main() -> Result<()>{
     let args = StrobemerArgs::parse();
-    match run(&args.common_args, &args.strobemer_args) {
+    match generic_seed_comparison(&args.common_args, &args.strobemer_args) {
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);

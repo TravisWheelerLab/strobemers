@@ -17,7 +17,7 @@ pub struct KmerArgs{
 
 fn main() -> Result<()> {
     let args = KmerArgs::parse();
-    match run(&args.common_args, &args.kmer_args) {
+    match generic_seed_comparison(&args.common_args, &args.kmer_args) {
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);

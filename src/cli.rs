@@ -62,7 +62,13 @@ pub fn create_reader(file_path_from_manifest: &str) -> Result<Reader<BufReader<F
     Ok(query_reader)
 }
 
-pub fn run<T: SeedTraits>(args: &CommonArgs, seed_specific_args: &T) -> Result<Vec<String>> {
+// Does what it says. Uses carriage return.
+pub fn print_update(i: usize) {
+    print!("\r comparisons done: {:?}", i);
+    std::io::stdout().flush().unwrap();
+}
+
+pub fn generic_seed_comparison<T: SeedTraits>(args: &CommonArgs, seed_specific_args: &T) -> Result<Vec<String>> {
     let mut results_to_save = Vec::new();
 
     let query_reader = create_reader(&args.query_file)?;
@@ -82,9 +88,7 @@ pub fn run<T: SeedTraits>(args: &CommonArgs, seed_specific_args: &T) -> Result<V
             let ref_seeds = seed_specific_args.generate_seeds(reference_record.seq())?;
             let reference_time = reference_time.elapsed().as_secs_f64();
             let estimation = jaccard_similarity(&ref_seeds,&query_seeds)?;
-
-            print!("\r comparisons done: {:?}", i);
-            std::io::stdout().flush().unwrap();
+            print_update(i);
             i += 1;
 
             let result = format!("{},{},{}",
