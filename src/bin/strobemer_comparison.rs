@@ -23,8 +23,7 @@ fn main() -> Result<()>{
             std::process::exit(1);
         }
         Ok(results_to_save) => {
-            let seed_name = args.strobemer_args.repr();
-            args.common_args.save_results_to_csv(&seed_name, &results_to_save)?;
+            args.common_args.save_results_to_csv(&results_to_save)?;
         }
     }
     Ok(())

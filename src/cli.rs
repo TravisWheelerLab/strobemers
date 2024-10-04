@@ -91,7 +91,10 @@ pub fn generic_seed_comparison<T: SeedTraits>(args: &CommonArgs, seed_specific_a
             print_update(i);
             i += 1;
 
-            let result = format!("{},{},{}",
+            let result = format!("{},{},{},{},{},{}",
+                seed_specific_args.repr(),
+                query_record.id(),
+                reference_record.id(),
                 estimation,
                 query_time,
                 reference_time
@@ -140,20 +143,15 @@ impl SeedTraits for StrobemerSpecificArgs {
 // You need a results_to_save object and seed_name though. results_to_save is just a Vec<String>
 // containing "{estimation},{query_time},{ref_time}" lines. This trait takes care of the rest.
 pub trait SaveToCSV {
-    fn save_results_to_csv(&self, seed_name: &String, results_to_save: &Vec<String>) -> Result<()>;
+    fn save_results_to_csv(&self, results_to_save: &Vec<String>) -> Result<()>;
 }
 
 impl SaveToCSV for CommonArgs{
-    fn save_results_to_csv(&self, seed_name: &String, results_to_save: &Vec<String>) -> Result<()>{
+    fn save_results_to_csv(&self, results_to_save: &Vec<String>) -> Result<()>{
         let mut file = File::create(&self.output_file)?;
         writeln!(file, "seed_name,query_name,ref_name,estimation,query_time,ref_time")?;
         for result in results_to_save {
-            writeln!(file, "{},{},{},{}",
-                seed_name,
-                &self.query_file,
-                &self.references_file,
-                result
-            )?;
+            writeln!(file, "{}", result)?;
         }    
         Ok(())
     }        

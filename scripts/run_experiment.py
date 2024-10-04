@@ -1,9 +1,9 @@
 import sys
 import os
 
-""" I want this script to automate experiments.
-* Run strobemer_comparison on a bunch of query-reference files.
-* 
+"""
+I want this script to automate experiments.
+But I'm using a bash script instead :)
 """
 if __name__ == "__main__":
     if len(sys.argv) != 2:

@@ -1,10 +1,12 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cli::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::vec;
 use std::str::FromStr;
 use std::fmt;
+use std::cmp::{min, max};
+use std::ops::Range;
 pub mod cli;
 
 // --------------------------------------------------
@@ -356,48 +358,69 @@ pub fn seq_to_strobemers(seq: &[u8], args: &StrobemerSpecificArgs) -> Result<Vec
     // pre-compute hashes for l-mers at every index
     let lmer_hash_at_index: HashMap<usize, u64> = kmer_hash_index(&seq, &args.strobe_length);
 
-    for strobemer_start_idx in 0..=seq.len() { // One strobemer for each strobe start index
-        let mut current_strobemer_hash = lmer_hash_at_index[&strobemer_start_idx];
-        // ^ the first strobe is fixed. current_strobemer_hash will be mutated.
-        let mut strobe_indices = vec![strobemer_start_idx];
-        // ^ we will append indices as we select (order - 1) more strobes.
-        for strobe_number in 0..args.order - 1 { // one strobe per iteration
-            let end_of_last_window =
-                strobemer_start_idx + &args.strobe_length + strobe_number * &args.w_max;
-            let strobe_selection_range = {
-                if end_of_last_window + &args.w_max <= seq.len() - &args.strobe_length - 1 {
-                    end_of_last_window + &args.w_min..end_of_last_window + &args.w_max
-                } else if end_of_last_window + &args.w_min + 1 < seq.len()
-                  && seq.len() <= end_of_last_window + &args.w_max {
-                    end_of_last_window + &args.w_min..seq.len() - 1
-                } else {
-                    return Ok(strobemers)
-                }
-            };
-
-            let (selected_strobe_index, selected_strobemer_hash) = match args.protocol {
-                Protocol::Rand => select_randstrobe_index_and_hash(
-                    &lmer_hash_at_index, strobe_selection_range, current_strobemer_hash)?,
-                Protocol::Min => select_randstrobe_index_and_hash(
-                    &lmer_hash_at_index, strobe_selection_range, 0)?,
-                Protocol::Hybrid => unimplemented!(),
-            };
-            
-            strobe_indices.push(selected_strobe_index);
-            current_strobemer_hash = selected_strobemer_hash;
-        }
-
-        // construct the SeedObject vector
-        strobemers.push(SeedObject {
-            identifier: current_strobemer_hash,
-            ref_index: args.ref_index.clone(),
-            local_index: strobemer_start_idx,
-            word_indices: strobe_indices,
-        });
+    for strobemer_start_idx in 0..=lmer_hash_at_index.len() { // One strobemer for each strobe start index
+        let strobemer = create_strobemer(
+            &args,
+            &lmer_hash_at_index,
+            strobemer_start_idx,
+            &seq.len()
+        )?;
+        strobemers.push(strobemer);
     }
     Ok(strobemers)
 }
 
+pub fn create_strobemer(args: &StrobemerSpecificArgs, lmer_hash_at_index: &HashMap<usize, u64>, strobemer_start_idx: usize, seq_len: &usize) -> Result<SeedObject> {
+
+    // Select first strobe
+    let mut strobe_indices = vec![strobemer_start_idx];
+    let mut strobemer_id = lmer_hash_at_index[&strobemer_start_idx];
+
+    let w_u = min(args.w_max, (*seq_len-strobemer_start_idx)/(args.order - 1));
+    let w_l = max(args.strobe_length, args.w_min - (args.w_max - w_u));
+    
+    for strobe_number in 2..=args.order { // one strobe per iteration
+        let strobe_window = strobemer_start_idx + w_l + (strobe_number - 2)*w_u..strobemer_start_idx + (strobe_number - 1) * w_u;
+        let strobe_idx = match args.protocol {
+            Protocol::Min => argmin(&lmer_hash_at_index, strobe_window, &0)?,
+            Protocol::Rand => argmin(&lmer_hash_at_index, strobe_window, &strobemer_id)?,
+            Protocol::Hybrid => unimplemented!()
+        };
+        
+        strobe_indices.push(strobe_idx);
+        strobemer_id = strobemer_id/3 + lmer_hash_at_index[&strobe_idx]/2;
+        // ^ this may be wrong
+    }
+
+    Ok(SeedObject {
+        identifier: strobemer_id,
+        ref_index: args.ref_index.clone(),
+        local_index: strobemer_start_idx,
+        word_indices: strobe_indices,
+    })
+
+}
+
+pub fn argmin(lmer_hash_at_index: &HashMap<usize, u64>, strobe_window: Range<usize>, mask: &u64) -> Result<usize> {
+    let mut min_key = None;
+    let mut min_value = u64::MAX;
+
+    for idx in strobe_window {
+        match lmer_hash_at_index.get(&idx) {
+            Some(&hash) => {
+                if hash ^ mask < min_value { // if mask == 0, ^ has no effect
+                    min_value = hash;
+                    min_key = Some(idx);
+                }
+            }
+            None => {
+                return Err(anyhow!("Could not index lmer_hash_at_index at (idx={})", idx));
+            }
+        }
+    }
+
+    Ok(min_key.expect("min_key was never assigned: likely that strobe_window has length 0"))
+}
 
 // Randstrobes are conditionally dependent on previous strobes' hashes. If we fix the previous
 // strobes hashes, the conditional dependence disappears and it becomes equivalent to
@@ -415,6 +438,23 @@ pub fn select_randstrobe_index_and_hash(
 
     Ok((next_strobe_index, next_strobe_hash))
 }
+
+// --------------------------------------------------
+// Strobemer tests
+// --------------------------------------------------
+
+#[cfg(test)]
+mod strobemer_tests {
+    use crate::create_strobemer;
+    use crate::SeedObject;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_jaccard_similarity_simple() {
+
+    }
+}
+
 
 // --------------------------------------------------
 // Similarity methods
