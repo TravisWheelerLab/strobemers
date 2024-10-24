@@ -7,7 +7,7 @@ This repository contains command-line executables that estimate the edit distanc
 
 ## Progress
 - Minstrobes implemented and tested.
-- 10,000-nt sequences with pre-computed edit distance generated for comparison with seed-bag-comparison estimates ((/data/experiment3)[`data/experiment3_`]).
+- 10,000-nt sequences with pre-computed edit distance generated for comparison with seed-bag-comparison estimates ((/data/experiment3)[/data/experiment3_100_query_higher_res]).
 
 ## Development
 - Randstrobes and Hybridstrobes
