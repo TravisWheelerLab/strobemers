@@ -4,11 +4,9 @@
 This repository contains command-line executables that estimate the edit distance between query and reference sequences using:
 1. Jaccard similarity of k-mer bags.
 2. Jaccard similarity of strobemer bags.
-3. maybe in the future, tensor slide sketch
 
 ## Progress
-- Unit tests for everything but strobemers
+- Minstrobes implemented and tested. 10,000-nt sequences with pre-computed edit distance generated for comparison with seed-bag-comparison estimates.
 
 ## Development
-- Develop unit tests for strobemers
-- Write wrapper script to automate experiments
+- Randstrobes and Hybridstrobes
