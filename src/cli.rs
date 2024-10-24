@@ -1,3 +1,5 @@
+//! Command-line interface code.
+
 use std::fs::File;
 use std::path::Path;
 use std::io::{BufReader, Write};
@@ -12,7 +14,7 @@ use crate::*;
 // --------------------------------------------------
 // Arguments.
 
-// Common arguments are positional arguments for input and output file names.
+/// Positional arguments for input and output file names.
 #[derive(Debug, Parser)]
 #[command(about, author, version)]
 pub struct CommonArgs {
@@ -25,6 +27,7 @@ pub struct CommonArgs {
     pub output_file: String,
 }
 
+/// Keyword arguments for k-mers.
 #[derive(Debug, Parser)]
 pub struct KmerSpecificArgs {
     #[arg(short='k', value_name = "INT", help="Substring length")]
@@ -34,6 +37,7 @@ pub struct KmerSpecificArgs {
     pub ref_index: usize,
 }
 
+/// Keyword arguments for Strobemers
 #[derive(Debug, Parser)]
 pub struct StrobemerSpecificArgs {
     #[arg(short='p', value_name = "PROTOCOL", help="Strobemer generation protocol", default_value = "rand")]
@@ -52,8 +56,9 @@ pub struct StrobemerSpecificArgs {
 }
 
 // --------------------------------------------------
-// Helper functions for run() -- mostly code deduplication.
+// Helper functions
 
+/// Creates a [`bio::io::fasta::Reader`] relative to CARGO_MANIFEST_DIR.
 pub fn create_reader(file_path_from_manifest: &str) -> Result<Reader<BufReader<File>>>{
     let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
     let query_reader = Reader::from_file(
@@ -62,12 +67,15 @@ pub fn create_reader(file_path_from_manifest: &str) -> Result<Reader<BufReader<F
     Ok(query_reader)
 }
 
-// Does what it says. Uses carriage return.
+/// Prints an update to stdout with carriage return.
 pub fn print_update(i: usize) {
     print!("\r comparisons done: {:?}", i);
     std::io::stdout().flush().unwrap();
 }
 
+/// Given a [`bio::io::fasta::Reader`] of a query file (with 1 sequence) and a reference file
+/// (with 1 or more sequences), will generate a [`Vec`]\<[`SeedObject`]\> based on how
+/// seed_specific_args implements [`SeedTraits`].
 pub fn generic_seed_comparison<T: SeedTraits>(args: &CommonArgs, seed_specific_args: &T) -> Result<Vec<String>> {
     let mut results_to_save = Vec::new();
 
@@ -106,9 +114,7 @@ pub fn generic_seed_comparison<T: SeedTraits>(args: &CommonArgs, seed_specific_a
 }
 
 // --------------------------------------------------
-// SeedTraits allows run() to work with arbitrary [seed]SpecificArgs.
-// All you need to do is define how generate_seeds works for that kind of seed.
-// There is also a repr() function which helps with more code deduplication.
+/// Allows code to take a generic type and generate a [`Vec`]\<[`SeedObject`].
 pub trait SeedTraits {
     fn generate_seeds(&self, seq: &[u8]) -> Result<Vec<SeedObject>>;
     fn repr(&self) -> String;
@@ -138,10 +144,8 @@ impl SeedTraits for StrobemerSpecificArgs {
     }
 }
 
-// --------------------------------------------------
-// More deduplication -- SaveToCVS makes it super easy to save results.
-// You need a results_to_save object and seed_name though. results_to_save is just a Vec<String>
-// containing "{estimation},{query_time},{ref_time}" lines. This trait takes care of the rest.
+
+/// A trait to make saving results easier.
 pub trait SaveToCSV {
     fn save_results_to_csv(&self, results_to_save: &Vec<String>) -> Result<()>;
 }

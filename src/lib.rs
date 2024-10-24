@@ -1,17 +1,20 @@
-use anyhow::{anyhow, Result};
-use cli::*;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+//! This is a Rust implementation of Kristoffer Sahlin's [strobemers](https://github.com/ksahlin/strobemers):
+//! Strobemers are alignment seeds that are robust to indels due to unfixed gaps between strobes.
+//! 
+
+
+use anyhow::{anyhow, Ok, Result};
+use std::collections::{HashMap, hash_map::Entry};
 use std::vec;
-use std::str::FromStr;
-use std::fmt;
+use std::{fmt, str::FromStr};
 use std::cmp::{min, max};
 use std::ops::Range;
+
 pub mod cli;
+use cli::*;
 
-// --------------------------------------------------
-// Seed Object (how do we represent a seed?)
 
+/// A struct for managing seed instances.
 #[derive(Debug, Clone, Eq)]
 pub struct SeedObject {
     pub identifier: u64, // seed representation, such as a hash
@@ -63,21 +66,27 @@ static SEQ_NT4_TABLE: [u8; 256] = {
     table
 };
 
-// return u2-encoded nt. See SEQ_NT4_TABLE directly above this function.
+/// return u2-encoding of a utf-8-encoded nucleotide.
+/// 
+/// See SEQ_NT4_TABLE directly above this function.
 pub fn nt_encoded_as_u2(nt_utf8: &u8) -> u8 {
     SEQ_NT4_TABLE[*nt_utf8 as usize]
 }
 
-// modifies kmer_bits in place.
-// Shift the bit-string 2 bits to the left, slap on the 2-bit encoded nucleotide,
-// and cut off the extra 2 bits
+/// Packs a u2-encoded nucleotide onto `kmer_bits` in-place.
+/// 
+/// Step 1: Shift the bit-string 2 bits to the left
+/// 
+/// Step 2: Slap on the 2-bit encoded nucleotide
+/// 
+/// Step 3: Cut off the extra 2 bits
 pub fn pack_nt_onto_kmer(kmer_bits: &mut u64, nucleotide: u8, mask: &u64) {
     *kmer_bits = kmer_bits.wrapping_shl(2); // make room for a new nt with bit-shift-left.
     *kmer_bits |= nucleotide as u64; // turn the first 2 bits into the nt using bitwise OR
     *kmer_bits &= mask; // erase bits over the length of k with bitwise AND
 }
 
-// Turn a sequence of DNA (u8 slice of utf-8 encoded nucleotides) into kmers.
+/// Turn a \[[u8]\] of utf-8 encoded nucleotides into a [Vec]\<[`SeedObject`]\>.
 pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs) -> Result<Vec<SeedObject>> {
     let mut kmers = vec![];
     if (kmer_args.k == 0) | (sequence.len() < kmer_args.k) {
@@ -179,16 +188,13 @@ mod kmer_tests {
     }
 }
 
-
-
-// --------------------------------------------------
-// Hashing code. This is used in strobemers for minimization.
-// any k-mer has its own unique representation as a bitpacked integer.
-// The issue is that these are ordered, so minimizing a window isn't
-// a straightforward process.
-
-// Takes a u64 (a bit-representation of a seed) which we want to hash.
-// The mask restricts the output hash to 0..= 2*k. I don't really know why.
+/// Hashes a bitpacked seed for use in minimization methods.
+/// 
+/// Not lexicographically ordered like the bitpacked integer representation.
+/// 
+/// mask is a series of k 1's so the proper seed is hashed (a u64 always represents
+/// 32 bitpacked nucleotides, so we need to mask the u64 so hash64 knows which nucleotides
+/// to pay attention to).
 pub fn hash64(u2encoded_seed: &u64, mask: &u64) -> u64 {
     let mut key = u2encoded_seed.clone();
     key = (!key).wrapping_add(key.wrapping_shl(21));
@@ -205,8 +211,8 @@ pub fn hash64(u2encoded_seed: &u64, mask: &u64) -> u64 {
     key
 }
 
-// maps kmer indices to hash values NOT determined by their u2-encodings
-pub fn kmer_hash_index(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
+/// Map seq's indices to the [`hash64`] hash value of the index's k-mer.
+pub fn kmer_hash_table(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
     let mut hash_table = HashMap::new();
     let mask = match k {
         0 => {return hash_table;},
@@ -238,7 +244,7 @@ pub fn kmer_hash_index(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
 #[cfg(test)]
 mod hashing_tests {
     use std::collections::HashMap;
-    use crate::kmer_hash_index;
+    use crate::kmer_hash_table;
     use crate::hash64;
     use pretty_assertions::assert_eq;
 
@@ -273,7 +279,7 @@ mod hashing_tests {
 
     #[test]
     fn test_kmer_hash_table_demonstration(){
-        let hash_table = kmer_hash_index(b"ACGT", &2);
+        let hash_table = kmer_hash_table(b"ACGT", &2);
         let mut true_hash_table = HashMap::new();
         true_hash_table.insert(0, hash64(&0b0001, &0b1111)); // AC
         true_hash_table.insert(1, hash64(&0b0110, &0b1111)); // CG
@@ -282,7 +288,7 @@ mod hashing_tests {
     }
     #[test]
     fn test_kmer_hash_table_seqlen33_k32(){
-        let table = kmer_hash_index(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &32);
+        let table = kmer_hash_table(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &32);
         let mut true_table = HashMap::new();
         true_table.insert(0, hash64(
             &0b0000000001010101101010101111111100000000010101011010101011111111, 
@@ -297,14 +303,14 @@ mod hashing_tests {
 
     #[test]
     fn test_kmer_hash_table_k33(){
-        let table = kmer_hash_index(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &33);
+        let table = kmer_hash_table(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &33);
         let true_table = HashMap::new();
         assert_eq!(table, true_table);
     }
 
     #[test]
     fn test_kmer_hash_table_k0(){
-        let table = kmer_hash_index(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &0);
+        let table = kmer_hash_table(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &0);
         let true_table = HashMap::new();
         assert_eq!(table, true_table);
     }
@@ -314,8 +320,9 @@ mod hashing_tests {
 // --------------------------------------------------
 // Strobemers code
 
-// We have Minstrobes, Randstrobes and Hybridstrobes.
-// This makes our life easier for pattern matching.
+/// This enum makes our life easier for pattern matching on strobemer protocol types.
+/// 
+/// There are 3 strobemer protocols: Minstrobes, Randstrobes and Hybridstrobes.
 #[derive(Debug, Clone)]
 pub enum Protocol {
     Rand,
@@ -324,14 +331,14 @@ pub enum Protocol {
 }
 
 impl FromStr for Protocol { // for pattern matching
-    type Err = String;
+    type Err = anyhow::Error;
 
     fn from_str(input: &str) -> Result<Protocol, Self::Err> {
         match input {
             "rand" => Ok(Protocol::Rand),
             "min" => Ok(Protocol::Min),
             "hybrid" => Ok(Protocol::Hybrid),
-            _ => Err(format!("Invalid protocol: {}", input)),
+            _ => Err(anyhow!("Invalid protocol: {}", input))
         }
     }
 }
@@ -347,7 +354,7 @@ impl fmt::Display for Protocol { // for formatting/displaying to a string.
     }
 }
 
-
+/// Generate a sequence's set of strobemers. 
 pub fn seq_to_strobemers(seq: &[u8], args: &StrobemerSpecificArgs) -> Result<Vec<SeedObject>> {
     let mut strobemers: Vec<SeedObject> = Vec::new();
 
@@ -356,28 +363,48 @@ pub fn seq_to_strobemers(seq: &[u8], args: &StrobemerSpecificArgs) -> Result<Vec
     }
 
     // pre-compute hashes for l-mers at every index
-    let lmer_hash_at_index: HashMap<usize, u64> = kmer_hash_index(&seq, &args.strobe_length);
+    let lmer_hash_at_index: HashMap<usize, u64> = kmer_hash_table(&seq, &args.strobe_length);
 
-    for strobemer_start_idx in 0..=lmer_hash_at_index.len() { // One strobemer for each strobe start index
+    let seq_len = lmer_hash_at_index.len() - 1 + args.strobe_length;
+    let strobemer_len = args.strobe_length * args.order;
+    for strobemer_start_idx in 0..=seq_len - strobemer_len { // One strobemer for each strobe start index
         let strobemer = create_strobemer(
             &args,
             &lmer_hash_at_index,
-            strobemer_start_idx,
-            &seq.len()
+            strobemer_start_idx
         )?;
         strobemers.push(strobemer);
     }
     Ok(strobemers)
 }
 
-pub fn create_strobemer(args: &StrobemerSpecificArgs, lmer_hash_at_index: &HashMap<usize, u64>, strobemer_start_idx: usize, seq_len: &usize) -> Result<SeedObject> {
+/// Generate a sequence's strobemer at a specified start index.
+/// 
+/// Instead of taking the sequence, this method takes a HashMap mapping indices to kmer hashes
+/// to be minimized over.
+pub fn create_strobemer(args: &StrobemerSpecificArgs, lmer_hash_at_index: &HashMap<usize, u64>, strobemer_start_idx: usize) -> Result<SeedObject> {
 
     // Select first strobe
     let mut strobe_indices = vec![strobemer_start_idx];
     let mut strobemer_id = lmer_hash_at_index[&strobemer_start_idx];
 
-    let w_u = min(args.w_max, (*seq_len-strobemer_start_idx)/(args.order - 1));
-    let w_l = max(args.strobe_length, args.w_min - (args.w_max - w_u));
+    // let seq_length = lmer_hash_at_index.len() - 1 + args.strobe_length;
+    let alternative_w_max = match args.order {
+        1 => 0, // does not matter, won't be used
+        _ => (lmer_hash_at_index.len() - strobemer_start_idx)/(args.order-1) // comes into play at the end
+        // ^ modification from Sahlin's algorithm
+    };
+    let w_u = min(args.w_max, alternative_w_max);
+    // From Sahlin's algorithm:
+    // w_u = min(args.w_max, ((lmer_hash_at_index.len() + args.strobe_length - 1)-strobemer_start_idx)/(args.order - 1));
+    
+    let conditional_w_min = match args.w_min < args.w_max - w_u {
+        true => 0, // prevent subtraction with overflow
+        false => args.w_min - (args.w_max - w_u)
+    };
+    // From Sahlin's program:
+    // w_l = max(args.strobe_length, args.w_min - (args.w_max - w_u));
+    let w_l = max(conditional_w_min, args.strobe_length);
     
     for strobe_number in 2..=args.order { // one strobe per iteration
         let strobe_window = strobemer_start_idx + w_l + (strobe_number - 2)*w_u..strobemer_start_idx + (strobe_number - 1) * w_u;
@@ -401,6 +428,10 @@ pub fn create_strobemer(args: &StrobemerSpecificArgs, lmer_hash_at_index: &HashM
 
 }
 
+/// Returns the index corresponding to the smallest hash.
+/// 
+/// mask is a bitstring which deterministically disrupts the l-mer's hash value (useful for
+/// yet-unimplemented randstrobes)
 pub fn argmin(lmer_hash_at_index: &HashMap<usize, u64>, strobe_window: Range<usize>, mask: &u64) -> Result<usize> {
     let mut min_key = None;
     let mut min_value = u64::MAX;
@@ -418,25 +449,11 @@ pub fn argmin(lmer_hash_at_index: &HashMap<usize, u64>, strobe_window: Range<usi
             }
         }
     }
+    return match min_key {
+        Some(key) => Ok(key),
+        None => Err(anyhow!("min_key was never assigned: likely that strobe_window has length 0"))
+    }
 
-    Ok(min_key.expect("min_key was never assigned: likely that strobe_window has length 0"))
-}
-
-// Randstrobes are conditionally dependent on previous strobes' hashes. If we fix the previous
-// strobes hashes, the conditional dependence disappears and it becomes equivalent to
-// minstrobes.  
-pub fn select_randstrobe_index_and_hash(
-    lmer_hash_at_index: &HashMap<usize, u64>,
-    strobe_selection_range: std::ops::Range<usize>,
-    current_strobemer_hash: u64,
-) -> Result<(usize, u64)> {
-
-    let (next_strobe_index, next_strobe_hash) = strobe_selection_range
-        .map(|i| (i, lmer_hash_at_index.get(&i).unwrap() ^ current_strobemer_hash))
-        .min_by_key(|&(_, hash)| hash)
-        .unwrap();
-
-    Ok((next_strobe_index, next_strobe_hash))
 }
 
 // --------------------------------------------------
@@ -445,13 +462,253 @@ pub fn select_randstrobe_index_and_hash(
 
 #[cfg(test)]
 mod strobemer_tests {
-    use crate::create_strobemer;
-    use crate::SeedObject;
+    use crate::{argmin, create_strobemer, hash64, kmer_hash_table, seq_to_strobemers, StrobemerSpecificArgs, SeedObject};
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn test_jaccard_similarity_simple() {
+    fn test_argmin_demonstration() {
+        let lmer_hash_at_index = kmer_hash_table(b"ACGTACGT", &4);
+        let min_lmer_idx = argmin(&lmer_hash_at_index, 0..5, &0).ok().unwrap();
+        
+        let min_hash = [0b00011011, 0b01101100, 0b10110001, 0b11000110, 0b00011011]
+            .iter().map(|&x| hash64(&x, &0b11111111))
+            .min().unwrap();
+        assert_eq!(lmer_hash_at_index[&min_lmer_idx], min_hash)
+    }
+    #[test]
+    fn test_argmin_failure_out_of_range() {
+        let lmer_hash_at_index = kmer_hash_table(b"ACGTACGT", &4);
+        let min_lmer_idx = argmin(&lmer_hash_at_index, 0..6, &0);
+        assert!(min_lmer_idx.is_err());
+    }
+    #[test]
+    fn test_argmin_failure_empty_window() {
+        let lmer_hash_at_index = kmer_hash_table(b"ACGTACGT", &4);
+        let min_lmer_idx = argmin(&lmer_hash_at_index, 0..0, &0);
+        assert!(min_lmer_idx.is_err());
+    }
 
+    #[test]
+    fn test_kmer_hash_table_reflects_seq_len() {
+        let lmer_hash_at_index = kmer_hash_table(b"AACCTTGG", &5);
+        assert_eq!(lmer_hash_at_index.len(), 8-5+1);
+
+
+        let lmer_hash_at_index_2 = kmer_hash_table(b"AACCTTGGAAAA", &2);
+        assert_eq!(lmer_hash_at_index_2.len(), 12-2+1);
+    }
+
+    #[test]
+    fn test_create_strobemer_simple() {
+        // order 1, length 5 string, strobe_length = 4. 2 strobemers, each is only 1 strobe.
+        let args = StrobemerSpecificArgs{
+            protocol: crate::Protocol::Min,
+            order: 1,
+            strobe_length: 4,
+            w_min: 2,
+            w_max: 10,
+            ref_index: 0
+        };
+
+        let seq = b"ACGTA";
+        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
+        println!("Index 1: {}", hash64(&0b00011011, &0b11111111));
+
+        let strobemer_idx1_gold = SeedObject {
+            identifier: hash64(&0b00011011, &0b11111111),
+            ref_index: args.ref_index.clone(),
+            local_index: 0,
+            word_indices: vec![0],
+        };
+        
+        let strobemer_idx2_gold = SeedObject {
+            identifier: hash64(&0b01101100, &0b11111111),
+            ref_index: args.ref_index.clone(),
+            local_index: 1,
+            word_indices: vec![1],
+        };
+        
+
+        let strobemer_idx1 = create_strobemer(&args, lmer_hash_at_index, 0).ok().unwrap();
+        let strobemer_idx2 = create_strobemer(&args, lmer_hash_at_index, 1).ok().unwrap();
+
+        assert_eq!(strobemer_idx1, strobemer_idx1_gold);
+        assert_eq!(strobemer_idx2, strobemer_idx2_gold);
+    }
+
+    #[test]
+    fn test_create_strobemer_order2() {
+        // length 12 string, strobe length 4, order 2. Second strobe window range from 6 to 8.
+        // It just fits because lmer_hash_at_index[8] needs a 12-length string
+        // there must be a 4-mer at index 8, which requires a 12-length string.
+        let args = StrobemerSpecificArgs{
+            protocol: crate::Protocol::Min,
+            order: 2,
+            strobe_length: 4,
+            w_min: 6,
+            w_max: 8,
+            ref_index: 0
+        };
+
+        let seq = b"ACGTACGTACGT";
+        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
+
+        let strobe_1_hash = hash64(&0b00011011, &0b11111111);
+
+        let strobe_2_window = args.w_min..args.w_max;
+        let strobe_2_index = argmin(&lmer_hash_at_index, strobe_2_window, &0).ok().unwrap();
+        let strobe_2_hash = lmer_hash_at_index[&strobe_2_index];
+
+        let strobemer_idx1_gold = SeedObject {
+            identifier: {
+                strobe_1_hash / 3 +
+                strobe_2_hash / 2
+            },
+            ref_index: args.ref_index.clone(),
+            local_index: 0,
+            word_indices: vec![0, strobe_2_index,],
+        };
+
+        let strobemer_idx1 = create_strobemer(&args, lmer_hash_at_index, 0).ok().unwrap();
+        assert_eq!(strobemer_idx1, strobemer_idx1_gold);
+    }
+
+    #[test]
+    fn test_create_strobemers_order1() {
+        // length 12 string, strobe length 4, order 2. Second strobe window range from 6 to 8.
+        // It just fits because lmer_hash_at_index[8] needs a 12-length string
+        // there must be a 4-mer at index 8, which requires a 12-length string.
+        let args = StrobemerSpecificArgs{
+            protocol: crate::Protocol::Min,
+            order: 1,
+            strobe_length: 4,
+            w_min: 6,
+            w_max: 8,
+            ref_index: 0
+        };
+
+        let seq = b"ACGTACGT";
+        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
+
+        let strobemers_gold = vec![
+            SeedObject {
+                identifier: lmer_hash_at_index[&0],
+                ref_index: args.ref_index.clone(),
+                local_index: 0,
+                word_indices: vec![0],
+            },
+            SeedObject {
+                identifier: lmer_hash_at_index[&1],
+                ref_index: args.ref_index.clone(),
+                local_index: 1,
+                word_indices: vec![1],
+            },
+            SeedObject {
+                identifier: lmer_hash_at_index[&2],
+                ref_index: args.ref_index.clone(),
+                local_index: 2,
+                word_indices: vec![2],
+            },
+            SeedObject {
+                identifier: lmer_hash_at_index[&3],
+                ref_index: args.ref_index.clone(),
+                local_index: 3,
+                word_indices: vec![3],
+            },
+            SeedObject {
+                identifier: lmer_hash_at_index[&4],
+                ref_index: args.ref_index.clone(),
+                local_index: 4,
+                word_indices: vec![4],
+            },
+        ];
+
+        let strobemers = seq_to_strobemers(seq, &args).ok().unwrap();
+        assert_eq!(strobemers, strobemers_gold);
+    }
+
+    #[test]
+    fn test_create_strobemers_order2() {
+        // length 12 string, strobe length 4, order 2. Second strobe window range from 6 to 8.
+        // It just fits because lmer_hash_at_index[8] needs a 12-length string
+        // there must be a 4-mer at index 8, which requires a 12-length string.
+        let args = StrobemerSpecificArgs{
+            protocol: crate::Protocol::Min,
+            order: 2,
+            strobe_length: 4,
+            w_min: 6,
+            w_max: 8,
+            ref_index: 0
+        };
+
+        let seq = b"ACGTACGTACGT";
+        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
+
+        let strobemer1_strobe2_window = 6..8;
+        let strobemer1_strobe2_index = argmin(&lmer_hash_at_index, strobemer1_strobe2_window, &0).ok().unwrap();
+
+        let strobemer2_strobe2_window = 7..9;
+        let strobemer2_strobe2_index = argmin(&lmer_hash_at_index, strobemer2_strobe2_window, &0).ok().unwrap();
+
+        let strobemer3_strobe2_window = 7..9;
+        let strobemer3_strobe2_index = argmin(&lmer_hash_at_index, strobemer3_strobe2_window, &0).ok().unwrap();
+
+        let strobemer4_strobe2_window = 7..9;
+        let strobemer4_strobe2_index = argmin(&lmer_hash_at_index, strobemer4_strobe2_window, &0).ok().unwrap();
+
+        let strobemer5_strobe2_window = 8..9;
+        let strobemer5_strobe2_index = argmin(&lmer_hash_at_index, strobemer5_strobe2_window, &0).ok().unwrap();
+
+        let strobemers_gold = vec![
+            SeedObject {
+                identifier: {
+                    hash64(&0b00011011, &0b11111111) / 3 +
+                    lmer_hash_at_index[&strobemer1_strobe2_index] / 2
+                },
+                ref_index: args.ref_index.clone(),
+                local_index: 0,
+                word_indices: vec![0, strobemer1_strobe2_index,],
+            },
+            SeedObject {
+                identifier: {
+                    hash64(&0b01101100, &0b11111111) / 3 +
+                    lmer_hash_at_index[&strobemer2_strobe2_index] / 2
+                },
+                ref_index: args.ref_index.clone(),
+                local_index: 1,
+                word_indices: vec![1, strobemer2_strobe2_index,],
+            },
+            SeedObject {
+                identifier: {
+                    hash64(&0b10110001, &0b11111111) / 3 +
+                    lmer_hash_at_index[&strobemer3_strobe2_index] / 2
+                },
+                ref_index: args.ref_index.clone(),
+                local_index: 2,
+                word_indices: vec![2, strobemer3_strobe2_index,],
+            },
+            SeedObject {
+                identifier: {
+                    hash64(&0b11000110, &0b11111111) / 3 +
+                    lmer_hash_at_index[&strobemer4_strobe2_index] / 2
+                },
+                ref_index: args.ref_index.clone(),
+                local_index: 3,
+                word_indices: vec![3, strobemer4_strobe2_index,],
+            },
+            SeedObject {
+                identifier: {
+                    hash64(&0b00011011, &0b11111111) / 3 +
+                    lmer_hash_at_index[&strobemer5_strobe2_index] / 2
+                },
+                ref_index: args.ref_index.clone(),
+                local_index: 4,
+                word_indices: vec![4, strobemer5_strobe2_index,],
+            },
+        ];
+
+        let strobemers = seq_to_strobemers(seq, &args).ok().unwrap();
+        assert_eq!(strobemers, strobemers_gold);
     }
 }
 
@@ -460,7 +717,7 @@ mod strobemer_tests {
 // Similarity methods
 // --------------------------------------------------
 
-
+/// Jaccard similarity of multi-sets. Relies on SeedObject implementing PartialEq. 
 pub fn jaccard_similarity(base_seed_bag: &Vec<SeedObject>, mod_seed_bag: &Vec<SeedObject>
 ) -> Result<f64> {
 
@@ -528,8 +785,7 @@ mod jaccard_similarity_tests {
     }
 }
 
-// --------------------------------------------------
-// Match/NAMs related code.
+/// A struct for managing matching-seed related code. Unimplemented.
 pub struct Match<'a> {
     pub ref_id: &'a str,
     pub query_id: &'a str,
@@ -537,7 +793,7 @@ pub struct Match<'a> {
     pub query_idx: usize
 }
 
-
+/// Find non-overlapping approximate matches given two [`Vec`]\<[`SeedObject`]>'s. Unimplemented.
 #[allow(warnings)]
 pub fn find_nams<'a>(
     query_seed_bag: &Vec<SeedObject>,
