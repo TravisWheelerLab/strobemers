@@ -6,7 +6,8 @@ This repository contains command-line executables that estimate the edit distanc
 2. Jaccard similarity of strobemer bags.
 
 ## Progress
-- Minstrobes implemented and tested. 10,000-nt sequences with pre-computed edit distance generated for comparison with seed-bag-comparison estimates.
+- Minstrobes implemented and tested.
+- 10,000-nt sequences with pre-computed edit distance generated for comparison with seed-bag-comparison estimates ((/data/experiment3)[`data/experiment3_`]).
 
 ## Development
 - Randstrobes and Hybridstrobes
