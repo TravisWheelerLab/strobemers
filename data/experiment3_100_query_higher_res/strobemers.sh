@@ -10,7 +10,7 @@ TEMPDIR=$(mktemp -d)
 
 P="min"
 O=2
-L=5
+L=6
 WMIN=5
 WMAX=25
 

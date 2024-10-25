@@ -1,13 +1,11 @@
 //! Command-line interface code.
 
 use std::fs::File;
-use std::path::Path;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, BufRead, Write};
 use std::time::Instant;
 
 use anyhow::Result;
 use clap::Parser;
-use bio::io::fasta::Reader;
 
 use crate::*;
 
@@ -58,13 +56,51 @@ pub struct StrobemerSpecificArgs {
 // --------------------------------------------------
 // Helper functions
 
-/// Creates a [`bio::io::fasta::Reader`] relative to CARGO_MANIFEST_DIR.
-pub fn create_reader(file_path_from_manifest: &str) -> Result<Reader<BufReader<File>>>{
-    let project_dir = std::env::var("CARGO_MANIFEST_DIR")?;
-    let query_reader = Reader::from_file(
-        Path::new(&project_dir).join(file_path_from_manifest)
-    )?;
-    Ok(query_reader)
+fn parse_fasta(filename: &str) -> Result<Vec<(String, Vec<u8>)>> {
+    let file = File::open(filename)?;
+    let reader = BufReader::new(file);
+
+    let mut sequences = Vec::new();
+    let mut current_sequence = Vec::new();
+    let mut current_id = String::new();
+
+    for line in reader.lines() {
+        let line = line?;
+
+        if line.starts_with('>') {
+            // New sequence started, store previous sequence if any
+            if !current_sequence.is_empty() {
+                sequences.push((current_id, current_sequence.clone()));
+                current_sequence.clear();
+            }
+            // id to new sequence
+            current_id = line[1..].to_string();
+        } else {
+            // Process sequence data
+            let converted_sequence: Vec<u8> = line
+                .chars()
+                .map(|c| match c {
+                    'A' => 0,
+                    'C' => 1,
+                    'G' => 2,
+                    'T' => 3,
+                    'a' => 0,
+                    'c' => 1,
+                    'g' => 2,
+                    't' => 3,
+                    _ => 0, // For all other IUB codes
+                })
+                .collect();
+            current_sequence.extend(converted_sequence);
+        }
+    }
+
+    // Store the last sequence
+    if !current_sequence.is_empty() {
+        sequences.push((current_id, current_sequence));
+    }
+
+    Ok(sequences)
 }
 
 /// Prints an update to stdout with carriage return.
@@ -73,27 +109,21 @@ pub fn print_update(i: usize) {
     std::io::stdout().flush().unwrap();
 }
 
-/// Given a [`bio::io::fasta::Reader`] of a query file (with 1 sequence) and a reference file
-/// (with 1 or more sequences), will generate a [`Vec`]\<[`SeedObject`]\> based on how
-/// seed_specific_args implements [`SeedTraits`].
+/// Generates a [`Vec`]\<[`SeedObject`]\> based on how seed_specific_args implements
+/// [`SeedTraits`] (i.e. [`StrobemerSpecificArgs`] will generate Strobemers).
 pub fn generic_seed_comparison<T: SeedTraits>(args: &CommonArgs, seed_specific_args: &T) -> Result<Vec<String>> {
     let mut results_to_save = Vec::new();
 
-    let query_reader = create_reader(&args.query_file)?;
-    for query_record in query_reader.records() {
-        // There should only be 1 query record!
-        let query_record = query_record?;
+    for (query_id, query_seq) in parse_fasta(&args.query_file)? {
         let query_seed_start_time = Instant::now();
         
-        let query_seeds = seed_specific_args.generate_seeds(query_record.seq())?;
+        let query_seeds = seed_specific_args.generate_seeds(&query_seq)?;
         let query_time = query_seed_start_time.elapsed().as_secs_f64();
 
-        let references_reader = create_reader(&args.references_file)?;
         let mut i: usize = 0;
-        for reference_record in references_reader.records() {
-            let reference_record = reference_record?;
+        for (reference_id, reference_seq) in parse_fasta(&args.references_file)? {
             let reference_time = Instant::now();
-            let ref_seeds = seed_specific_args.generate_seeds(reference_record.seq())?;
+            let ref_seeds = seed_specific_args.generate_seeds(&reference_seq)?;
             let reference_time = reference_time.elapsed().as_secs_f64();
             let estimation = jaccard_similarity(&ref_seeds,&query_seeds)?;
             print_update(i);
@@ -101,8 +131,8 @@ pub fn generic_seed_comparison<T: SeedTraits>(args: &CommonArgs, seed_specific_a
 
             let result = format!("{},{},{},{},{},{}",
                 seed_specific_args.repr(),
-                query_record.id(),
-                reference_record.id(),
+                query_id,
+                reference_id,
                 estimation,
                 query_time,
                 reference_time
