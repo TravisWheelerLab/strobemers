@@ -38,70 +38,124 @@ impl core::hash::Hash for SeedObject {
 // --------------------------------------------------
 // Kmer code
 
-// A table to map utf-8 encoded characters to our custom u2 encoding
-// for nucleotides.
-//
-// "A" and "a" map to 0 or 0b00
-// "C" and "c" map to 1 or 0b01
-// "G" and "g" map to 2 or 0b10
-// "T" and "t" map to 3 or 0b11
-// "N" maps to 4 or 0b100.
-// ^ This is POSSIBLE because u2 doesn't exist and we HAVE to use u8 anyway.
-// ^ This should probably change.
-// Everything else maps to 5 or 0b101.
-// ^ This should probably also change.
-static SEQ_NT4_TABLE: [u8; 256] = {
-    let mut table = [5; 256]; // Default 5
-    table[b'N' as usize] = 4;
-
-    table[b'A' as usize] = 0;
-    table[b'C' as usize] = 1;
-    table[b'G' as usize] = 2;
-    table[b'T' as usize] = 3;
-    table[b'a' as usize] = 0;
-    table[b'c' as usize] = 1;
-    table[b'g' as usize] = 2;
-    table[b't' as usize] = 3;
-
-    table
-};
-
-/// return u2-encoding of a utf-8-encoded nucleotide.
-/// 
-/// See SEQ_NT4_TABLE directly above this function.
+/// Returns the u2-encoding of a utf_8-encoded nucleotide.
 pub fn nt_encoded_as_u2(nt_utf8: &u8) -> u8 {
-    SEQ_NT4_TABLE[*nt_utf8 as usize]
+    match nt_utf8 {
+        b'A' | b'a' => 0,
+        b'C' | b'c' => 1,
+        b'G' | b'g' => 2,
+        b'T' | b't' => 3,
+        _ => 0, // Default for unsupported characters
+    }
 }
 
-/// Packs a u2-encoded nucleotide onto `kmer_bits` in-place.
-/// 
-/// Step 1: Shift the bit-string 2 bits to the left
-/// 
-/// Step 2: Slap on the 2-bit encoded nucleotide
-/// 
-/// Step 3: Cut off the extra 2 bits
-pub fn pack_nt_onto_kmer(kmer_bits: &mut u64, nucleotide: u8, mask: &u64) {
-    *kmer_bits = kmer_bits.wrapping_shl(2); // make room for a new nt with bit-shift-left.
-    *kmer_bits |= nucleotide as u64; // turn the first 2 bits into the nt using bitwise OR
-    *kmer_bits &= mask; // erase bits over the length of k with bitwise AND
+pub trait VecU2 {
+    /// Returns a nucleotide-u2 encoding of the utf_8 encoded [`u8`].
+    fn encode_u2(&self) -> Vec<u8>;
+    /// Assumes the [`u8`] is u2-encoded. Returns the [`u8`] bit-packed as a u64.
+    fn pack(&self) -> u64;
 }
 
-/// Turn a \[[u8]\] of utf-8 encoded nucleotides into a [Vec]\<[`SeedObject`]\>.
+impl VecU2 for [u8] {
+    fn encode_u2(&self) -> Vec<u8> {
+        self.iter().map(|nt| nt_encoded_as_u2(nt)).collect()
+    }
+
+    fn pack(&self) -> u64 {
+        self.into_iter()
+            .fold(0, |packed, nt_u2| packed << 2 | *nt_u2 as u64)
+    }
+}
+
+#[cfg(test)]
+mod vec_u2_tests {
+    use crate::nt_encoded_as_u2;
+
+    use super::VecU2;
+
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_to_vec_u2_demonstration() {
+        let gold_vec: Vec<u8> = b"ACGTx".iter().map(|c| nt_encoded_as_u2(c)).collect();
+        assert_eq!(gold_vec, b"ACGTx".encode_u2());
+        assert_eq!(Vec::<u8>::new(), b"".encode_u2());
+    }
+
+    #[test]
+    fn test_to_u64_u2_demonstration() {
+        let seq = b"ACGT";
+        let seq_u2 = 0b00011011;
+
+        assert_eq!(seq_u2, seq.encode_u2().pack());
+    }
+}
+
+pub trait Packed {
+    /// Packs a u2-encoded nucleotide onto &self in-place.
+    /// 
+    /// Step 1: Shift the bit-string 2 bits to the left
+    /// 
+    /// Step 2: Slap on the 2-bit encoded nucleotide
+    /// 
+    /// Step 3: Cut off the extra 2 bits
+    fn pack_on(&mut self, nt: u8, mask: &u64);
+}
+
+impl Packed for u64 {
+    fn pack_on(&mut self, nt: u8, mask: &u64) {
+        // make room for a new nt with bit-shift-left.
+        *self = self.wrapping_shl(2); 
+        // turn the first 2 bits into the nt using bitwise OR
+        *self |= nt as u64; 
+        // erase bits over the length of k with bitwise AND
+        *self &= mask; 
+    }
+}
+
+pub fn mask(k: usize) -> u64 {
+    match k {
+        1..=31 => (1 << (k * 2)) - 1,
+        32 => u64::MAX,
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod mask_tests {
+    use super::mask;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_mask_basic() {
+        assert_eq!(0b11, mask(1));
+        assert_eq!(0b1111, mask(2));
+        assert_eq!(0b111111, mask(3));
+    }
+    
+    #[test]
+    fn test_mask_edge_cases() {
+        assert_eq!(0, mask(0));
+        assert_eq!(u64::MAX, mask(32));
+        assert_eq!(0, mask(33))
+    }
+}
+
+/// Turn a \[[u8]\] of u2-encoded, u8-represented nucleotides into a [Vec]\<[`SeedObject`]\>.
 pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs) -> Result<Vec<SeedObject>> {
     let mut kmers = vec![];
     if (kmer_args.k == 0) | (sequence.len() < kmer_args.k) {
         return Ok(kmers);
     }
 
-    let mask: u64 = (0b1 << (2 * kmer_args.k)) - 1; // 1 repeated 2*k times
+    let mask = mask(kmer_args.k.clone());
     let mut kmer_bits = 0_u64;
     let mut l = 0; // how many characters we have "loaded" (must be >= k to be a valid kmer)
 
     for i in 0..sequence.len() { // i is the beginning of a k-mer
-        let nt_utf8 = sequence.get(i).unwrap(); // i will never exceed seq.len()
-        let nt = nt_encoded_as_u2(&nt_utf8);
+        let nt = *sequence.get(i).unwrap(); // i will never exceed seq.len()
         if nt >= 4 {l = 0;kmer_bits = 0;} else { // restart if nt == 'N'. Idk why, its from sahlin.
-            pack_nt_onto_kmer(&mut kmer_bits, nt, &mask);
+            kmer_bits.pack_on(nt, &mask);
             if {l += 1; l >= kmer_args.k} { // kmer_bits IS the kmer identifier!
                 kmers.push(SeedObject {
                     identifier: kmer_bits.clone(),
@@ -120,34 +174,49 @@ pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs) -> Result<Vec
 #[cfg(test)]
 mod kmer_tests {
     use anyhow::Result;
-    use crate::{nt_encoded_as_u2, pack_nt_onto_kmer, seq_to_kmers, KmerSpecificArgs, SeedObject};
+    use crate::{mask, nt_encoded_as_u2, seq_to_kmers, KmerSpecificArgs, Packed, SeedObject, VecU2};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_nt_encoded_as_u2() {
-        let seq = b"ACGTNx";
-        assert_eq!(0u8 as u8, nt_encoded_as_u2(&seq[0]));
-        assert_eq!(1u8 as u8, nt_encoded_as_u2(&seq[1]));
-        assert_eq!(2u8 as u8, nt_encoded_as_u2(&seq[2]));
-        assert_eq!(3u8 as u8, nt_encoded_as_u2(&seq[3]));
-        assert_eq!(4u8 as u8, nt_encoded_as_u2(&seq[4]));
-        assert_eq!(5u8 as u8, nt_encoded_as_u2(&seq[5]));
+        let seq = b"ACGTacgtNx";
+        assert_eq!(0o0, nt_encoded_as_u2(&seq[0]));
+        assert_eq!(0o1, nt_encoded_as_u2(&seq[1]));
+        assert_eq!(0o2, nt_encoded_as_u2(&seq[2]));
+        assert_eq!(0o3, nt_encoded_as_u2(&seq[3]));
+        assert_eq!(0o0, nt_encoded_as_u2(&seq[4]));
+        assert_eq!(0o1, nt_encoded_as_u2(&seq[5]));
+        assert_eq!(0o2, nt_encoded_as_u2(&seq[6]));
+        assert_eq!(0o3, nt_encoded_as_u2(&seq[7]));
+        assert_eq!(0o0, nt_encoded_as_u2(&seq[8]));
     }
 
     #[test]
-    fn test_pack_nt_onto_kmer() {
-        let mut kmer_bits = 0b0001; // AC
-        pack_nt_onto_kmer(&mut kmer_bits, 0b10, &0b1111);
+    fn test_pack_on() {
+        let mask = &mask(3);
+        let mut kmer_bits = 0_u64;
 
-        let true_kmer_bits = 0b0110;
-        assert_eq!(true_kmer_bits, kmer_bits);
+        kmer_bits.pack_on(0b00, mask);
+        assert_eq!(kmer_bits, b"A".encode_u2().pack());
+
+        kmer_bits.pack_on(0b01, mask);
+        assert_eq!(kmer_bits, b"AC".encode_u2().pack());
+
+        kmer_bits.pack_on(0b10, mask);
+        assert_eq!(kmer_bits, b"ACG".encode_u2().pack());
+
+        kmer_bits.pack_on(0b11, mask);
+        assert_eq!(kmer_bits, b"CGT".encode_u2().pack());
+
+        kmer_bits.pack_on(0b11, mask);
+        assert_eq!(kmer_bits, b"GTT".encode_u2().pack());
     }
     
     #[test]
     // This test demonstrates that my kmer implementation works.
     fn test_seq_to_kmers_demonstration() -> Result<()>{
         let kmers_returned =seq_to_kmers(
-            b"ACTG", 
+            &b"ACTG".encode_u2(), 
             &KmerSpecificArgs{k:3, ref_index:0}
         )?;
         let mut kmers_real = Vec::new();
@@ -212,6 +281,8 @@ pub fn hash64(u2encoded_seed: &u64, mask: &u64) -> u64 {
 }
 
 /// Map seq's indices to the [`hash64`] hash value of the index's k-mer.
+/// 
+/// seq is a u2-encoded, u8-represented nucleotide. 
 pub fn kmer_hash_table(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
     let mut hash_table = HashMap::new();
     let mask = match k {
@@ -224,17 +295,15 @@ pub fn kmer_hash_table(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
     let mut kmer_bits = 0_u64;
     
     let mut l = 0;
-    for idx in 0..seq.len() { // idx never greater than seq.len()!
-        let nt_utf8 = seq.get(idx).unwrap();
-        let nt = nt_encoded_as_u2(nt_utf8);
-        if nt < 4 { // valid character (not 'N')
-            pack_nt_onto_kmer(&mut kmer_bits, nt, &mask);
-            if {l += 1; l >= *k} {
-                let hash = hash64(&kmer_bits, &mask);
-                hash_table.insert(idx + 1 - k, hash); // it will never have an entry
-            }
+    for idx in 0..seq.len() {
+        let nt = seq.get(idx).unwrap();
+        kmer_bits.pack_on(*nt, &mask);
+        if {l += 1; l >= *k} {
+            let hash = hash64(&kmer_bits, &mask);
+            hash_table.insert(idx + 1 - k, hash);
         }
     }
+    
     hash_table
 }
 
@@ -244,8 +313,7 @@ pub fn kmer_hash_table(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
 #[cfg(test)]
 mod hashing_tests {
     use std::collections::HashMap;
-    use crate::kmer_hash_table;
-    use crate::hash64;
+    use crate::{kmer_hash_table, hash64, mask, VecU2};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -279,7 +347,8 @@ mod hashing_tests {
 
     #[test]
     fn test_kmer_hash_table_demonstration(){
-        let hash_table = kmer_hash_table(b"ACGT", &2);
+        let seq_u2: Vec<u8> = b"ACGT".encode_u2();
+        let hash_table = kmer_hash_table(&seq_u2, &2);
         let mut true_hash_table = HashMap::new();
         true_hash_table.insert(0, hash64(&0b0001, &0b1111)); // AC
         true_hash_table.insert(1, hash64(&0b0110, &0b1111)); // CG
@@ -288,29 +357,32 @@ mod hashing_tests {
     }
     #[test]
     fn test_kmer_hash_table_seqlen33_k32(){
-        let table = kmer_hash_table(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &32);
+        let seq_u2: Vec<u8> = b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA".encode_u2();
+        let table = kmer_hash_table(&seq_u2, &32);
         let mut true_table = HashMap::new();
         true_table.insert(0, hash64(
-            &0b0000000001010101101010101111111100000000010101011010101011111111, 
-            &0b1111111111111111111111111111111111111111111111111111111111111111)
+            &b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTT".encode_u2().pack(),
+            &mask(32))
         );
         true_table.insert(1, hash64(
-            &0b0000000101010110101010111111110000000001010101101010101111111100, 
-            &0b1111111111111111111111111111111111111111111111111111111111111111)
+            &b"AAACCCCGGGGTTTTAAAACCCCGGGGTTTTA".encode_u2().pack(), 
+            &mask(32))
         );
         assert_eq!(table, true_table);
     }
 
     #[test]
     fn test_kmer_hash_table_k33(){
-        let table = kmer_hash_table(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &33);
+        let seq_u2 = b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA".encode_u2();
+        let table = kmer_hash_table(&seq_u2, &33);
         let true_table = HashMap::new();
         assert_eq!(table, true_table);
     }
 
     #[test]
     fn test_kmer_hash_table_k0(){
-        let table = kmer_hash_table(b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA", &0);
+        let seq_u2 = b"AAAACCCCGGGGTTTTAAAACCCCGGGGTTTTA".encode_u2();
+        let table = kmer_hash_table(&seq_u2, &0);
         let true_table = HashMap::new();
         assert_eq!(table, true_table);
     }
@@ -358,9 +430,9 @@ impl fmt::Display for Protocol { // for formatting/displaying to a string.
 pub fn seq_to_strobemers(seq: &[u8], args: &StrobemerSpecificArgs) -> Result<Vec<SeedObject>> {
     let mut strobemers: Vec<SeedObject> = Vec::new();
 
-    if seq.len() < args.w_max {
-        return Ok(strobemers);
-    }
+    // if seq.len() < args.w_max {
+    //     return Ok(strobemers);
+    // }    
 
     // pre-compute hashes for l-mers at every index
     let lmer_hash_at_index: HashMap<usize, u64> = kmer_hash_table(&seq, &args.strobe_length);
@@ -462,39 +534,52 @@ pub fn argmin(lmer_hash_at_index: &HashMap<usize, u64>, strobe_window: Range<usi
 
 #[cfg(test)]
 mod strobemer_tests {
-    use crate::{argmin, create_strobemer, hash64, kmer_hash_table, seq_to_strobemers, StrobemerSpecificArgs, SeedObject};
+    use crate::{argmin, create_strobemer, hash64, kmer_hash_table, mask, seq_to_strobemers, SeedObject, StrobemerSpecificArgs, VecU2};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_argmin_demonstration() {
-        let lmer_hash_at_index = kmer_hash_table(b"ACGTACGT", &4);
+        let seq_u2= b"ACGTACGT".encode_u2();
+        let lmer_hash_at_index = kmer_hash_table(&seq_u2, &4);
         let min_lmer_idx = argmin(&lmer_hash_at_index, 0..5, &0).ok().unwrap();
         
-        let min_hash = [0b00011011, 0b01101100, 0b10110001, 0b11000110, 0b00011011]
-            .iter().map(|&x| hash64(&x, &0b11111111))
-            .min().unwrap();
+        let min_hash = [b"ACGT", b"CGTA", b"GTAC", b"TACG", b"ACGT"]
+            .iter()
+            .map(|kmer| hash64(&kmer.encode_u2().pack(), &mask(4)))
+            .min()
+            .unwrap();
         assert_eq!(lmer_hash_at_index[&min_lmer_idx], min_hash)
     }
+
+    #[test]
+    fn test_argmin_basic() {
+        let seq = b"ACTG".encode_u2();
+        let lmer_hash_at_index = kmer_hash_table(&seq, &4);
+        assert_eq!(lmer_hash_at_index[&0], hash64(&seq.pack(), &mask(4)));
+    }
+
     #[test]
     fn test_argmin_failure_out_of_range() {
-        let lmer_hash_at_index = kmer_hash_table(b"ACGTACGT", &4);
+        let lmer_hash_at_index = kmer_hash_table(&b"ACGTACGT".encode_u2(), &4);
         let min_lmer_idx = argmin(&lmer_hash_at_index, 0..6, &0);
         assert!(min_lmer_idx.is_err());
     }
+
     #[test]
     fn test_argmin_failure_empty_window() {
-        let lmer_hash_at_index = kmer_hash_table(b"ACGTACGT", &4);
+        let seq_u2 = b"ACGTACGT".encode_u2();
+        let lmer_hash_at_index = kmer_hash_table(&seq_u2, &4);
         let min_lmer_idx = argmin(&lmer_hash_at_index, 0..0, &0);
         assert!(min_lmer_idx.is_err());
     }
 
     #[test]
     fn test_kmer_hash_table_reflects_seq_len() {
-        let lmer_hash_at_index = kmer_hash_table(b"AACCTTGG", &5);
+        let lmer_hash_at_index = kmer_hash_table(&b"AACCTTGG".encode_u2(), &5);
         assert_eq!(lmer_hash_at_index.len(), 8-5+1);
 
 
-        let lmer_hash_at_index_2 = kmer_hash_table(b"AACCTTGGAAAA", &2);
+        let lmer_hash_at_index_2 = kmer_hash_table(&b"AACCTTGGAAAA".encode_u2(), &2);
         assert_eq!(lmer_hash_at_index_2.len(), 12-2+1);
     }
 
@@ -510,19 +595,20 @@ mod strobemer_tests {
             ref_index: 0
         };
 
-        let seq = b"ACGTA";
-        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
-        println!("Index 1: {}", hash64(&0b00011011, &0b11111111));
+        let seq: Vec<u8> = b"ACGTA".encode_u2();
+        let lmer_hash_at_index = &kmer_hash_table(&seq, &args.strobe_length);
+        let mask = &mask(4);
+        println!("Index 1: {}", hash64(&0b00011011, mask));
 
         let strobemer_idx1_gold = SeedObject {
-            identifier: hash64(&0b00011011, &0b11111111),
+            identifier: hash64(&0b00011011, mask),
             ref_index: args.ref_index.clone(),
             local_index: 0,
             word_indices: vec![0],
         };
         
         let strobemer_idx2_gold = SeedObject {
-            identifier: hash64(&0b01101100, &0b11111111),
+            identifier: hash64(&0b01101100, mask),
             ref_index: args.ref_index.clone(),
             local_index: 1,
             word_indices: vec![1],
@@ -550,10 +636,10 @@ mod strobemer_tests {
             ref_index: 0
         };
 
-        let seq = b"ACGTACGTACGT";
-        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
+        let seq = b"ACGTACGTACGT".encode_u2();
+        let lmer_hash_at_index = &kmer_hash_table(&seq, &args.strobe_length);
 
-        let strobe_1_hash = hash64(&0b00011011, &0b11111111);
+        let strobe_1_hash = hash64(&0b00011011, &mask(4));
 
         let strobe_2_window = args.w_min..args.w_max;
         let strobe_2_index = argmin(&lmer_hash_at_index, strobe_2_window, &0).ok().unwrap();
@@ -587,43 +673,20 @@ mod strobemer_tests {
             ref_index: 0
         };
 
-        let seq = b"ACGTACGT";
-        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
+        let seq = b"ACGTACGT".encode_u2();
+        let lmer_hash_at_index = &kmer_hash_table(&seq, &args.strobe_length);
+        let strobemers_gold: Vec<SeedObject> = (0..5).into_iter()
+            .map(|i|
+                SeedObject {
+                    identifier: lmer_hash_at_index[&i],
+                    ref_index: args.ref_index.clone(),
+                    local_index: i,
+                    word_indices: vec![i],
+                }
+            )
+            .collect();
 
-        let strobemers_gold = vec![
-            SeedObject {
-                identifier: lmer_hash_at_index[&0],
-                ref_index: args.ref_index.clone(),
-                local_index: 0,
-                word_indices: vec![0],
-            },
-            SeedObject {
-                identifier: lmer_hash_at_index[&1],
-                ref_index: args.ref_index.clone(),
-                local_index: 1,
-                word_indices: vec![1],
-            },
-            SeedObject {
-                identifier: lmer_hash_at_index[&2],
-                ref_index: args.ref_index.clone(),
-                local_index: 2,
-                word_indices: vec![2],
-            },
-            SeedObject {
-                identifier: lmer_hash_at_index[&3],
-                ref_index: args.ref_index.clone(),
-                local_index: 3,
-                word_indices: vec![3],
-            },
-            SeedObject {
-                identifier: lmer_hash_at_index[&4],
-                ref_index: args.ref_index.clone(),
-                local_index: 4,
-                word_indices: vec![4],
-            },
-        ];
-
-        let strobemers = seq_to_strobemers(seq, &args).ok().unwrap();
+        let strobemers = seq_to_strobemers(&seq, &args).ok().unwrap();
         assert_eq!(strobemers, strobemers_gold);
     }
 
@@ -641,73 +704,33 @@ mod strobemer_tests {
             ref_index: 0
         };
 
-        let seq = b"ACGTACGTACGT";
-        let lmer_hash_at_index = &kmer_hash_table(seq, &args.strobe_length);
+        let seq = b"ACGTACGTACGT".encode_u2();
+        let lmer_hash_at_index = &kmer_hash_table(&seq, &args.strobe_length);
+        let strobemers_gold: Vec<SeedObject>= [
+            (b"ACGT", 0, 6..8),
+            (b"CGTA", 1, 7..9),
+            (b"GTAC", 2, 7..9),
+            (b"TACG", 3, 7..9),
+            (b"ACGT", 4, 8..9),
+        ]
+            .iter()
+            .map(|(strobe1, strobe1_index, strobe2_window)|
+                {
+                    let strobe2_index = argmin(&lmer_hash_at_index, strobe2_window.clone(), &0).ok().unwrap();
+                    SeedObject {
+                        identifier: {
+                            hash64(&strobe1.encode_u2().pack(), &mask(4)) / 3 +
+                            lmer_hash_at_index[&strobe2_index] / 2
+                        },
+                        ref_index: args.ref_index.clone(),
+                        local_index: strobe1_index.clone(),
+                        word_indices: vec![*strobe1_index, strobe2_index,]
+                    }
+                }
+            )
+            .collect();
 
-        let strobemer1_strobe2_window = 6..8;
-        let strobemer1_strobe2_index = argmin(&lmer_hash_at_index, strobemer1_strobe2_window, &0).ok().unwrap();
-
-        let strobemer2_strobe2_window = 7..9;
-        let strobemer2_strobe2_index = argmin(&lmer_hash_at_index, strobemer2_strobe2_window, &0).ok().unwrap();
-
-        let strobemer3_strobe2_window = 7..9;
-        let strobemer3_strobe2_index = argmin(&lmer_hash_at_index, strobemer3_strobe2_window, &0).ok().unwrap();
-
-        let strobemer4_strobe2_window = 7..9;
-        let strobemer4_strobe2_index = argmin(&lmer_hash_at_index, strobemer4_strobe2_window, &0).ok().unwrap();
-
-        let strobemer5_strobe2_window = 8..9;
-        let strobemer5_strobe2_index = argmin(&lmer_hash_at_index, strobemer5_strobe2_window, &0).ok().unwrap();
-
-        let strobemers_gold = vec![
-            SeedObject {
-                identifier: {
-                    hash64(&0b00011011, &0b11111111) / 3 +
-                    lmer_hash_at_index[&strobemer1_strobe2_index] / 2
-                },
-                ref_index: args.ref_index.clone(),
-                local_index: 0,
-                word_indices: vec![0, strobemer1_strobe2_index,],
-            },
-            SeedObject {
-                identifier: {
-                    hash64(&0b01101100, &0b11111111) / 3 +
-                    lmer_hash_at_index[&strobemer2_strobe2_index] / 2
-                },
-                ref_index: args.ref_index.clone(),
-                local_index: 1,
-                word_indices: vec![1, strobemer2_strobe2_index,],
-            },
-            SeedObject {
-                identifier: {
-                    hash64(&0b10110001, &0b11111111) / 3 +
-                    lmer_hash_at_index[&strobemer3_strobe2_index] / 2
-                },
-                ref_index: args.ref_index.clone(),
-                local_index: 2,
-                word_indices: vec![2, strobemer3_strobe2_index,],
-            },
-            SeedObject {
-                identifier: {
-                    hash64(&0b11000110, &0b11111111) / 3 +
-                    lmer_hash_at_index[&strobemer4_strobe2_index] / 2
-                },
-                ref_index: args.ref_index.clone(),
-                local_index: 3,
-                word_indices: vec![3, strobemer4_strobe2_index,],
-            },
-            SeedObject {
-                identifier: {
-                    hash64(&0b00011011, &0b11111111) / 3 +
-                    lmer_hash_at_index[&strobemer5_strobe2_index] / 2
-                },
-                ref_index: args.ref_index.clone(),
-                local_index: 4,
-                word_indices: vec![4, strobemer5_strobe2_index,],
-            },
-        ];
-
-        let strobemers = seq_to_strobemers(seq, &args).ok().unwrap();
+        let strobemers = seq_to_strobemers(&seq, &args).ok().unwrap();
         assert_eq!(strobemers, strobemers_gold);
     }
 }

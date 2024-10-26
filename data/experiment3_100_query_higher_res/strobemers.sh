@@ -2,7 +2,7 @@
 
 set -u
 
-DIR=$HOME/classes/INFO-492/rust-strobemers/data/experiment3_100_query_higher_res
+DIR=$HOME/classes/INFO-498H/rust-strobemers/data/experiment3_100_query_higher_res
 SEQDIR=$DIR/sequences
 DATADIR=$DIR/data
 FIGDIR=$DIR/figures
@@ -15,7 +15,7 @@ WMIN=5
 WMAX=25
 
 for NUM in $(seq 0 9); do
-    cargo run --bin strobemer_comparison -- \
+    cargo run -r --bin strobemer_comparison -- \
         -p $P \
         -o $O  \
         -l $L \

@@ -114,9 +114,9 @@ pub fn print_update(i: usize) {
 pub fn generic_seed_comparison<T: SeedTraits>(args: &CommonArgs, seed_specific_args: &T) -> Result<Vec<String>> {
     let mut results_to_save = Vec::new();
 
-    for (query_id, query_seq) in parse_fasta(&args.query_file)? {
+    let query_parsed = parse_fasta(&args.query_file)?;
+    for (query_id, query_seq) in query_parsed {
         let query_seed_start_time = Instant::now();
-        
         let query_seeds = seed_specific_args.generate_seeds(&query_seq)?;
         let query_time = query_seed_start_time.elapsed().as_secs_f64();
 
@@ -189,4 +189,39 @@ impl SaveToCSV for CommonArgs{
         }    
         Ok(())
     }        
+}
+
+#[cfg(test)]
+mod parse_fasta_tests {
+    use super::parse_fasta;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+
+    #[test]
+    fn test_parse_fasta_multiple_sequences() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, ">seq1\nACGTacgt\n>seq2\nTGCA").unwrap();
+        
+        let result = parse_fasta(file.path().to_str().unwrap());
+        
+        assert!(result.is_ok());
+        let sequences = result.unwrap();
+        assert_eq!(sequences.len(), 2);
+        assert_eq!(sequences[0].0, "seq1");
+        assert_eq!(sequences[0].1, vec![0, 1, 2, 3, 0, 1, 2, 3]);
+        assert_eq!(sequences[1].0, "seq2");
+        assert_eq!(sequences[1].1, vec![3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn test_parse_fasta_empty_file() {
+        let file = NamedTempFile::new().unwrap();
+        
+        let result = parse_fasta(file.path().to_str().unwrap());
+        
+        assert!(result.is_ok());
+        let sequences = result.unwrap();
+        assert!(sequences.is_empty());
+    }
+
 }
