@@ -2,7 +2,6 @@
 //! Strobemers are alignment seeds that are robust to indels due to unfixed gaps between strobes.
 //! 
 
-
 use anyhow::{anyhow, Ok, Result};
 use std::collections::{HashMap, hash_map::Entry};
 use std::vec;
@@ -13,23 +12,29 @@ use std::ops::Range;
 pub mod cli;
 use cli::*;
 
-
 /// A struct for managing seed instances.
 #[derive(Debug, Clone, Eq)]
 pub struct SeedObject {
-    pub identifier: u64, // seed representation, such as a hash
-    pub ref_index: usize, // I have no idea what this is, it's just stored here for reference.
-    pub local_index: usize, // index in the sequence it's from
-    pub word_indices: Vec<usize> // if non-contiguous, the start positions of its sub-strings.
+    /// How we identify the seed. Usually a hash or a bit-packed representation.
+    pub identifier: u64, 
+    /// I have no idea what this is supposed to do, I just set it to 1 for everything.
+    pub ref_index: usize, 
+    /// The index in the original sequence at which this seed begins.
+    pub local_index: usize,
+    /// The start positions of sub-seeds (for instance, strobemers contain multiple strobes).
+    pub word_indices: Vec<usize> 
 }
 impl PartialEq for SeedObject {
+    /// Think about this some more!
     fn eq(&self, other: &Self) -> bool {
         (self.identifier == other.identifier) &
         (self.local_index == other.local_index) &
         (self.word_indices == other.word_indices)
     }
 }
+
 impl core::hash::Hash for SeedObject {
+    /// Used for HashSets, not comparisons 
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.identifier.hash(state);
     }
@@ -38,17 +43,25 @@ impl core::hash::Hash for SeedObject {
 // --------------------------------------------------
 // Kmer code
 
-/// Returns the u2-encoding of a utf_8-encoded nucleotide.
-pub fn nt_encoded_as_u2(nt_utf8: &u8) -> u8 {
-    match nt_utf8 {
-        b'A' | b'a' => 0,
-        b'C' | b'c' => 1,
-        b'G' | b'g' => 2,
-        b'T' | b't' => 3,
-        _ => 0, // Default for unsupported characters
+pub trait U2 {
+    /// Returns the u2-encoding of a utf_8-encoded nucleotide.
+    fn to_u2(&self) -> u8;
+}
+
+impl U2 for u8 {
+    /// Adapted from Robert Hubley.
+    fn to_u2(&self) -> u8 {
+        match self {
+            b'A' | b'a' => 0,
+            b'C' | b'c' => 1,
+            b'G' | b'g' => 2,
+            b'T' | b't' => 3,
+            _ => 0, // Default for unsupported characters
+        }
     }
 }
 
+/// Allows for easy manipulation of slices of objects that represent nucleotides.
 pub trait VecU2 {
     /// Returns a nucleotide-u2 encoding of the utf_8 encoded [`u8`].
     fn encode_u2(&self) -> Vec<u8>;
@@ -58,18 +71,22 @@ pub trait VecU2 {
 
 impl VecU2 for [u8] {
     fn encode_u2(&self) -> Vec<u8> {
-        self.iter().map(|nt| nt_encoded_as_u2(nt)).collect()
+        self
+            .iter()
+            .map(|nt| nt.to_u2())
+            .collect()
     }
 
     fn pack(&self) -> u64 {
-        self.into_iter()
+        self
+            .into_iter()
             .fold(0, |packed, nt_u2| packed << 2 | *nt_u2 as u64)
     }
 }
 
 #[cfg(test)]
 mod vec_u2_tests {
-    use crate::nt_encoded_as_u2;
+    use crate::U2;
 
     use super::VecU2;
 
@@ -77,7 +94,7 @@ mod vec_u2_tests {
 
     #[test]
     fn test_to_vec_u2_demonstration() {
-        let gold_vec: Vec<u8> = b"ACGTx".iter().map(|c| nt_encoded_as_u2(c)).collect();
+        let gold_vec: Vec<u8> = b"ACGTx".iter().map(|c| c.to_u2()).collect();
         assert_eq!(gold_vec, b"ACGTx".encode_u2());
         assert_eq!(Vec::<u8>::new(), b"".encode_u2());
     }
@@ -153,17 +170,19 @@ pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs) -> Result<Vec
     let mut l = 0; // how many characters we have "loaded" (must be >= k to be a valid kmer)
 
     for i in 0..sequence.len() { // i is the beginning of a k-mer
-        let nt = *sequence.get(i).unwrap(); // i will never exceed seq.len()
-        if nt >= 4 {l = 0;kmer_bits = 0;} else { // restart if nt == 'N'. Idk why, its from sahlin.
-            kmer_bits.pack_on(nt, &mask);
-            if {l += 1; l >= kmer_args.k} { // kmer_bits IS the kmer identifier!
-                kmers.push(SeedObject {
+        let nt = *sequence.get(i)
+            .ok_or(anyhow!("Index exceeds sequence length (this should never happen)."))?;
+        kmer_bits.pack_on(nt, &mask);
+        l += 1;
+        if l >= kmer_args.k {
+            kmers.push(
+                SeedObject {
                     identifier: kmer_bits.clone(),
                     ref_index: kmer_args.ref_index.clone(),
                     local_index: i + 1 - kmer_args.k,
                     word_indices: vec![],
-                });
-            }
+                }
+            );
         }
     }
     Ok(kmers)
@@ -174,21 +193,22 @@ pub fn seq_to_kmers(sequence: &[u8], kmer_args: &KmerSpecificArgs) -> Result<Vec
 #[cfg(test)]
 mod kmer_tests {
     use anyhow::Result;
-    use crate::{mask, nt_encoded_as_u2, seq_to_kmers, KmerSpecificArgs, Packed, SeedObject, VecU2};
+    use crate::{mask, seq_to_kmers, KmerSpecificArgs, Packed, SeedObject, U2, VecU2};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_nt_encoded_as_u2() {
         let seq = b"ACGTacgtNx";
-        assert_eq!(0o0, nt_encoded_as_u2(&seq[0]));
-        assert_eq!(0o1, nt_encoded_as_u2(&seq[1]));
-        assert_eq!(0o2, nt_encoded_as_u2(&seq[2]));
-        assert_eq!(0o3, nt_encoded_as_u2(&seq[3]));
-        assert_eq!(0o0, nt_encoded_as_u2(&seq[4]));
-        assert_eq!(0o1, nt_encoded_as_u2(&seq[5]));
-        assert_eq!(0o2, nt_encoded_as_u2(&seq[6]));
-        assert_eq!(0o3, nt_encoded_as_u2(&seq[7]));
-        assert_eq!(0o0, nt_encoded_as_u2(&seq[8]));
+
+        assert_eq!(0o0, seq[0].to_u2());
+        assert_eq!(0o1, seq[1].to_u2());
+        assert_eq!(0o2, seq[2].to_u2());
+        assert_eq!(0o3, seq[3].to_u2());
+        assert_eq!(0o0, seq[4].to_u2());
+        assert_eq!(0o1, seq[5].to_u2());
+        assert_eq!(0o2, seq[6].to_u2());
+        assert_eq!(0o3, seq[7].to_u2());
+        assert_eq!(0o0, seq[8].to_u2());
     }
 
     #[test]
@@ -264,6 +284,8 @@ mod kmer_tests {
 /// mask is a series of k 1's so the proper seed is hashed (a u64 always represents
 /// 32 bitpacked nucleotides, so we need to mask the u64 so hash64 knows which nucleotides
 /// to pay attention to).
+/// 
+/// Adapted from Kristoffer Sahlin: https://github.com/ksahlin/strobemers/blob/main/strobemers_cpp/index.cpp.
 pub fn hash64(u2encoded_seed: &u64, mask: &u64) -> u64 {
     let mut key = u2encoded_seed.clone();
     key = (!key).wrapping_add(key.wrapping_shl(21));
@@ -285,20 +307,21 @@ pub fn hash64(u2encoded_seed: &u64, mask: &u64) -> u64 {
 /// seq is a u2-encoded, u8-represented nucleotide. 
 pub fn kmer_hash_table(seq: &[u8], k: &usize) -> HashMap<usize, u64> {
     let mut hash_table = HashMap::new();
-    let mask = match k {
-        0 => {return hash_table;},
-        1..=31 => 1_u64.wrapping_shl(*k as u32 * 2) - 1,
-        32 => 0_u64.wrapping_sub(1), // max value for u64
-        _ => {return hash_table;},
+    let mask = mask(k.clone());
+    let mask = match mask {
+        0 => {return hash_table;}, // I feel kinda scummy about this
+        _ => mask,
     };
 
     let mut kmer_bits = 0_u64;
     
     let mut l = 0;
     for idx in 0..seq.len() {
-        let nt = seq.get(idx).unwrap();
+        let nt = seq.get(idx)
+            .ok_or(anyhow!("Index exceeds sequence length (this should never happen).")).ok().unwrap();
         kmer_bits.pack_on(*nt, &mask);
-        if {l += 1; l >= *k} {
+        l += 1;
+        if l >= *k {
             let hash = hash64(&kmer_bits, &mask);
             hash_table.insert(idx + 1 - k, hash);
         }
@@ -439,6 +462,9 @@ pub fn seq_to_strobemers(seq: &[u8], args: &StrobemerSpecificArgs) -> Result<Vec
 
     let seq_len = lmer_hash_at_index.len() - 1 + args.strobe_length;
     let strobemer_len = args.strobe_length * args.order;
+    if seq_len < strobemer_len {
+        return Ok(strobemers)
+    }
     for strobemer_start_idx in 0..=seq_len - strobemer_len { // One strobemer for each strobe start index
         let strobemer = create_strobemer(
             &args,
@@ -455,18 +481,17 @@ pub fn seq_to_strobemers(seq: &[u8], args: &StrobemerSpecificArgs) -> Result<Vec
 /// Instead of taking the sequence, this method takes a HashMap mapping indices to kmer hashes
 /// to be minimized over.
 pub fn create_strobemer(args: &StrobemerSpecificArgs, lmer_hash_at_index: &HashMap<usize, u64>, strobemer_start_idx: usize) -> Result<SeedObject> {
-
     // Select first strobe
     let mut strobe_indices = vec![strobemer_start_idx];
     let mut strobemer_id = lmer_hash_at_index[&strobemer_start_idx];
 
     // let seq_length = lmer_hash_at_index.len() - 1 + args.strobe_length;
-    let alternative_w_max = match args.order {
+    let w_max_alt = match args.order {
         1 => 0, // does not matter, won't be used
         _ => (lmer_hash_at_index.len() - strobemer_start_idx)/(args.order-1) // comes into play at the end
         // ^ modification from Sahlin's algorithm
     };
-    let w_u = min(args.w_max, alternative_w_max);
+    let w_u = min(args.w_max, w_max_alt);
     // From Sahlin's algorithm:
     // w_u = min(args.w_max, ((lmer_hash_at_index.len() + args.strobe_length - 1)-strobemer_start_idx)/(args.order - 1));
     
@@ -490,13 +515,14 @@ pub fn create_strobemer(args: &StrobemerSpecificArgs, lmer_hash_at_index: &HashM
         strobemer_id = strobemer_id/3 + lmer_hash_at_index[&strobe_idx]/2;
         // ^ this may be wrong
     }
-
-    Ok(SeedObject {
-        identifier: strobemer_id,
-        ref_index: args.ref_index.clone(),
-        local_index: strobemer_start_idx,
-        word_indices: strobe_indices,
-    })
+    Ok(
+        SeedObject {
+            identifier: strobemer_id,
+            ref_index: args.ref_index.clone(),
+            local_index: strobemer_start_idx,
+            word_indices: strobe_indices,
+        }
+    )
 
 }
 
