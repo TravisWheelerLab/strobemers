@@ -866,12 +866,8 @@ pub fn find_nams<'a>(
             let (count, offset) = mer.get(); // get extracts the values from OccupiedEntry
             if *count <= filter_cutoff {
                 //for j in offset..offset+count{ }
-
-                
             }
         }
-
     }
-
     Ok(nams)
 }
